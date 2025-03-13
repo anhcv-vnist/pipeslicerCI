@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/vanhcao3/pipeslicerCI/internal/ci"
 	"github.com/gofiber/fiber/v2"
@@ -10,7 +11,7 @@ import (
 func SetupPipelines(app *fiber.App) {
 	pipelinesGroup := app.Group("/pipelines")
 
-	pipelinesGroup.Post("/check-it-works", postCheckItWorks)
+	pipelinesGroup.Post("/build", postBuild)
 }
 
 type RequestBody struct {
@@ -18,24 +19,33 @@ type RequestBody struct {
 	Branch string `json:"branch" xml:"branch" form:"branch"`
 }
 
-func postCheckItWorks(c *fiber.Ctx) error {
+func postBuild(c *fiber.Ctx) error {
 	body := &RequestBody{}
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		log.Printf("Failed to parse request body: %v", err)
+		return c.Status(400).SendString("Invalid request body: " + err.Error())
 	}
+
+	log.Printf("Received request: URL=%s, Branch=%s", body.Url, body.Branch)
 
 	var ws ci.Workspace
 	ws, err := ci.NewWorkspaceFromGit("./tmp", body.Url, body.Branch)
 	if err != nil {
-		return err
+		log.Printf("Failed to create workspace: %v", err)
+		return c.Status(500).SendString("Failed to create workspace: " + err.Error())
 	}
+
+	log.Printf("Workspace created: Dir=%s, Branch=%s, Commit=%s", ws.Dir(), ws.Branch(), ws.Commit())
 
 	executor := ci.NewExecutor(ws)
 	output, err := executor.RunDefault(c.UserContext())
 	if err != nil {
-		return c.Status(500).SendString(output)
+		log.Printf("Pipeline execution failed: %v", err)
+		return c.Status(500).SendString("Pipeline execution failed: " + err.Error())
 	}
+
+	log.Printf("Pipeline executed successfully: %s", output)
 
 	return c.SendString(
 		fmt.Sprintf(

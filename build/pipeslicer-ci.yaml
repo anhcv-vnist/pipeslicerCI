@@ -1,4 +1,4 @@
-name: My First Pipeline
+name: Test Pipeline
 steps:
 - name: Download dependencies
   commands:
