@@ -30,7 +30,7 @@ func postBuild(c *fiber.Ctx) error {
 	log.Printf("Received request: URL=%s, Branch=%s", body.Url, body.Branch)
 
 	var ws ci.Workspace
-	ws, err := ci.NewWorkspaceFromGit("./tmp", body.Url, body.Branch)
+	ws, err := ci.NewWorkspaceFromGit("/tmp", body.Url, body.Branch)
 	if err != nil {
 		log.Printf("Failed to create workspace: %v", err)
 		return c.Status(500).SendString("Failed to create workspace: " + err.Error())

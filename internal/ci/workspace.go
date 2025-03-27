@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"fmt"
 	"log"
-	"strings" 
+	//"strings" 
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -31,6 +31,7 @@ func NewWorkspaceFromGit(root, url, branch string) (*workspaceImpl, error) {
     possibleKeyPaths := []string{
         filepath.Join(usr.HomeDir, ".ssh", "id_rsa"),
         filepath.Join(usr.HomeDir, ".ssh", "id_ed25519"),
+		filepath.Join(usr.HomeDir, ".ssh", "vnist_e25519"),
         // Add other potential paths if needed
     }
 
@@ -60,15 +61,14 @@ func NewWorkspaceFromGit(root, url, branch string) (*workspaceImpl, error) {
     log.Printf("Cloning repository %s (branch: %s) to %s", url, branch, dir)
 
     // Use HTTPS URL instead of SSH URL
-	httpURL := strings.Replace(url, "git@github.com:", "https://github.com/", 1)
-	log.Printf("Falling back to HTTPS URL: %s", httpURL)
+	//httpURL := strings.Replace(url, "git@github.com:", "https://github.com/", 1)
+	//log.Printf("Falling back to HTTPS URL: %s", httpURL)
 
 	repo, err := git.PlainClone(dir, false, &git.CloneOptions{
-		URL:               httpURL,
+		URL:               url,
 		ReferenceName:     plumbing.NewBranchReferenceName(branch),
 		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		Depth:             1,
-		// No auth for public repos, or use token for private repos
 	})
     if err != nil {
         return nil, fmt.Errorf("git clone failed: %w", err)
@@ -130,7 +130,7 @@ func (ws *workspaceImpl) Env() []string {
 }
 
 func (ws *workspaceImpl) LoadPipeline() (*Pipeline, error) {
-	data, err := os.ReadFile(filepath.Join(ws.dir, "build", "pipeslicer-ci.yaml")) //TO DO: change the path to the correct one
+	data, err := os.ReadFile(filepath.Join(ws.dir, "build", "pipeslicer-ci.yaml")) //TO DO: load pipeline in request
 	if err != nil {
 		return nil, err
 	}
