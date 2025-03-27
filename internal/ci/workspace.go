@@ -129,21 +129,15 @@ func (ws *workspaceImpl) Env() []string {
 	return ws.env
 }
 
-func (ws *workspaceImpl) LoadPipeline() (*Pipeline, error) {
-	data, err := os.ReadFile(filepath.Join(ws.dir, "build", "pipeslicer-ci.yaml")) //TO DO: load pipeline in request
-	if err != nil {
-		return nil, err
-	}
-
+func (ws *workspaceImpl) LoadPipeline(yamlContent []byte) (*Pipeline, error) {
 	var pipeline Pipeline
-
-	err = yaml.Unmarshal(data, &pipeline)
+	err := yaml.Unmarshal(yamlContent, &pipeline)
 	if err != nil {
 		return nil, err
 	}
-
 	return &pipeline, nil
 }
+
 
 func (ws *workspaceImpl) ExecuteCommand(ctx context.Context, cmd string, args []string) ([]byte, error) {
 	command := exec.CommandContext(ctx, cmd, args...)

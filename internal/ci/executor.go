@@ -14,7 +14,7 @@ type Workspace interface {
 	Commit() string
 	Dir() string
 	Env() []string
-	LoadPipeline() (*Pipeline, error)
+	LoadPipeline(yamlContent []byte) (*Pipeline, error)
 	ExecuteCommand(ctx context.Context, cmd string, args []string) ([]byte, error)
 }
 
@@ -24,8 +24,8 @@ func NewExecutor(ws Workspace) *Executor {
 	}
 }
 
-func (e *Executor) RunDefault(ctx context.Context) (string, error) {
-	pipeline, err := e.ws.LoadPipeline()
+func (e *Executor) RunDefault(ctx context.Context, yamlContent []byte) (string, error) {
+	pipeline, err := e.ws.LoadPipeline(yamlContent)
 	if err != nil {
 		return "", err
 	}

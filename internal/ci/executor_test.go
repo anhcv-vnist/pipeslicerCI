@@ -10,7 +10,15 @@ import (
 
 func TestRunDefaultHappyPath(t *testing.T) {
 	wsMock := mockWorkspace{}
-	wsMock.On("LoadPipeline").Return(
+	yamlContent := []byte(`
+name: Test Pipeline
+steps:
+  - name: Step 1
+    commands:
+      - "cmd1 arg1 arg2"
+`)
+
+	wsMock.On("LoadPipeline", yamlContent).Return(
 		&Pipeline{
 			Name: "Test Pipeline",
 			Steps: []Step{
@@ -25,7 +33,7 @@ func TestRunDefaultHappyPath(t *testing.T) {
 	)
 
 	executor := NewExecutor(&wsMock)
-	str, err := executor.RunDefault(context.Background())
+	str, err := executor.RunDefault(context.Background(), yamlContent) // Pass YAML content
 
 	assert.Nil(t, err)
 
@@ -60,8 +68,8 @@ func (ws *mockWorkspace) Env() []string {
 	return args.Get(0).([]string)
 }
 
-func (ws *mockWorkspace) LoadPipeline() (*Pipeline, error) {
-	args := ws.Called()
+func (ws *mockWorkspace) LoadPipeline(yamlContent []byte) (*Pipeline, error) {
+	args := ws.Called(yamlContent)
 	return args.Get(0).(*Pipeline), args.Error(1)
 }
 
