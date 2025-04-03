@@ -1,0 +1,790 @@
+swagger: "2.0"
+info:
+  description: "PipeslicerCI API documentation"
+  version: "1.0.0"
+  title: "PipeslicerCI API"
+  contact:
+    email: "support@pipeslicerci.com"
+  license:
+    name: "MIT"
+    url: "https://opensource.org/licenses/MIT"
+host: "localhost:3000"
+basePath: "/"
+tags:
+- name: "imagebuilder"
+  description: "Image Builder operations"
+- name: "registry"
+  description: "Registry Manager operations"
+- name: "registry-connector"
+  description: "Registry Connector operations"
+- name: "config"
+  description: "Configuration Manager operations"
+- name: "pipelines"
+  description: "Pipeline operations"
+schemes:
+- "http"
+paths:
+  /imagebuilder/build:
+    post:
+      tags:
+      - "imagebuilder"
+      summary: "Build and push a Docker image"
+      description: "Builds a Docker image from a Git repository and pushes it to a registry"
+      consumes:
+      - "multipart/form-data"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "url"
+        in: "formData"
+        description: "Git repository URL"
+        required: true
+        type: "string"
+      - name: "branch"
+        in: "formData"
+        description: "Git branch"
+        required: true
+        type: "string"
+      - name: "servicePath"
+        in: "formData"
+        description: "Path to the service in the repository"
+        required: true
+        type: "string"
+      - name: "tag"
+        in: "formData"
+        description: "Tag for the Docker image"
+        required: false
+        type: "string"
+      - name: "registry"
+        in: "formData"
+        description: "Docker registry URL"
+        required: true
+        type: "string"
+      - name: "username"
+        in: "formData"
+        description: "Docker registry username"
+        required: true
+        type: "string"
+      - name: "password"
+        in: "formData"
+        description: "Docker registry password"
+        required: true
+        type: "string"
+        format: "password"
+      responses:
+        200:
+          description: "Image built and pushed successfully"
+          schema:
+            type: "object"
+            properties:
+              service:
+                type: "string"
+                description: "Service name"
+              tag:
+                type: "string"
+                description: "Image tag"
+              commit:
+                type: "string"
+                description: "Git commit hash"
+              branch:
+                type: "string"
+                description: "Git branch"
+              buildTime:
+                type: "string"
+                format: "date-time"
+                description: "Build timestamp"
+              success:
+                type: "boolean"
+                description: "Build success status"
+              output:
+                type: "string"
+                description: "Build output"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /imagebuilder/build-multiple:
+    post:
+      tags:
+      - "imagebuilder"
+      summary: "Build and push multiple Docker images"
+      description: "Builds multiple Docker images from a Git repository and pushes them to a registry"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        description: "Build multiple request"
+        required: true
+        schema:
+          type: "object"
+          properties:
+            url:
+              type: "string"
+              description: "Git repository URL"
+            branch:
+              type: "string"
+              description: "Git branch"
+            servicePaths:
+              type: "array"
+              description: "Paths to the services in the repository"
+              items:
+                type: "string"
+            tag:
+              type: "string"
+              description: "Tag for the Docker images"
+            registry:
+              type: "string"
+              description: "Docker registry URL"
+            username:
+              type: "string"
+              description: "Docker registry username"
+            password:
+              type: "string"
+              description: "Docker registry password"
+          required:
+          - "url"
+          - "branch"
+          - "servicePaths"
+          - "registry"
+          - "username"
+          - "password"
+      responses:
+        200:
+          description: "Images built and pushed successfully"
+          schema:
+            type: "object"
+            properties:
+              results:
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    service:
+                      type: "string"
+                      description: "Service name"
+                    tag:
+                      type: "string"
+                      description: "Image tag"
+                    commit:
+                      type: "string"
+                      description: "Git commit hash"
+                    branch:
+                      type: "string"
+                      description: "Git branch"
+                    buildTime:
+                      type: "string"
+                      format: "date-time"
+                      description: "Build timestamp"
+                    success:
+                      type: "boolean"
+                      description: "Build success status"
+                    output:
+                      type: "string"
+                      description: "Build output"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /imagebuilder/detect-changes:
+    post:
+      tags:
+      - "imagebuilder"
+      summary: "Detect which services have changed between branches"
+      description: "Detects which services have changed between branches in a Git repository"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        description: "Detect changes request"
+        required: true
+        schema:
+          type: "object"
+          properties:
+            url:
+              type: "string"
+              description: "Git repository URL"
+            baseBranch:
+              type: "string"
+              description: "Base Git branch"
+            currentBranch:
+              type: "string"
+              description: "Current Git branch"
+            registry:
+              type: "string"
+              description: "Docker registry URL"
+            username:
+              type: "string"
+              description: "Docker registry username"
+            password:
+              type: "string"
+              description: "Docker registry password"
+          required:
+          - "url"
+          - "baseBranch"
+          - "currentBranch"
+      responses:
+        200:
+          description: "Changed services detected successfully"
+          schema:
+            type: "object"
+            properties:
+              changedServices:
+                type: "array"
+                items:
+                  type: "string"
+                description: "List of changed services"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/services:
+    get:
+      tags:
+      - "registry"
+      summary: "Get all services with images"
+      description: "Gets a list of all services that have images in the registry"
+      produces:
+      - "application/json"
+      responses:
+        200:
+          description: "Services retrieved successfully"
+          schema:
+            type: "object"
+            properties:
+              services:
+                type: "array"
+                items:
+                  type: "string"
+                description: "List of services"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/services/{service}/tags:
+    get:
+      tags:
+      - "registry"
+      summary: "Get all tags for a service"
+      description: "Gets a list of all tags for a service in the registry"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name"
+        required: true
+        type: "string"
+      responses:
+        200:
+          description: "Tags retrieved successfully"
+          schema:
+            type: "object"
+            properties:
+              service:
+                type: "string"
+                description: "Service name"
+              tags:
+                type: "array"
+                items:
+                  type: "string"
+                description: "List of tags"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+    post:
+      tags:
+      - "registry"
+      summary: "Create a new tag"
+      description: "Creates a new tag for a service in the registry"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name"
+        required: true
+        type: "string"
+      - in: "body"
+        name: "body"
+        description: "Tag request"
+        required: true
+        schema:
+          type: "object"
+          properties:
+            sourceTag:
+              type: "string"
+              description: "Source tag"
+            newTag:
+              type: "string"
+              description: "New tag"
+          required:
+          - "sourceTag"
+          - "newTag"
+      responses:
+        200:
+          description: "Tag created successfully"
+          schema:
+            type: "object"
+            properties:
+              message:
+                type: "string"
+                description: "Success message"
+              service:
+                type: "string"
+                description: "Service name"
+              sourceTag:
+                type: "string"
+                description: "Source tag"
+              newTag:
+                type: "string"
+                description: "New tag"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/services/{service}/history:
+    get:
+      tags:
+      - "registry"
+      summary: "Get the build history for a service"
+      description: "Gets the build history for a service in the registry"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name"
+        required: true
+        type: "string"
+      - name: "limit"
+        in: "query"
+        description: "Maximum number of results to return"
+        required: false
+        type: "integer"
+        default: 10
+      responses:
+        200:
+          description: "History retrieved successfully"
+          schema:
+            type: "object"
+            properties:
+              service:
+                type: "string"
+                description: "Service name"
+              images:
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    id:
+                      type: "integer"
+                      format: "int64"
+                      description: "Image ID"
+                    service:
+                      type: "string"
+                      description: "Service name"
+                    tag:
+                      type: "string"
+                      description: "Image tag"
+                    commit:
+                      type: "string"
+                      description: "Git commit hash"
+                    branch:
+                      type: "string"
+                      description: "Git branch"
+                    buildTime:
+                      type: "string"
+                      format: "date-time"
+                      description: "Build timestamp"
+                    status:
+                      type: "string"
+                      description: "Build status"
+                    registry:
+                      type: "string"
+                      description: "Docker registry URL"
+                    imageName:
+                      type: "string"
+                      description: "Docker image name"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/services/{service}/latest:
+    get:
+      tags:
+      - "registry"
+      summary: "Get the latest image for a service"
+      description: "Gets the latest image for a service in the registry"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name"
+        required: true
+        type: "string"
+      - name: "branch"
+        in: "query"
+        description: "Git branch"
+        required: false
+        type: "string"
+        default: "main"
+      responses:
+        200:
+          description: "Latest image retrieved successfully"
+          schema:
+            type: "object"
+            properties:
+              id:
+                type: "integer"
+                format: "int64"
+                description: "Image ID"
+              service:
+                type: "string"
+                description: "Service name"
+              tag:
+                type: "string"
+                description: "Image tag"
+              commit:
+                type: "string"
+                description: "Git commit hash"
+              branch:
+                type: "string"
+                description: "Git branch"
+              buildTime:
+                type: "string"
+                format: "date-time"
+                description: "Build timestamp"
+              status:
+                type: "string"
+                description: "Build status"
+              registry:
+                type: "string"
+                description: "Docker registry URL"
+              imageName:
+                type: "string"
+                description: "Docker image name"
+        404:
+          description: "Image not found"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/services/{service}/tags/{tag}:
+    get:
+      tags:
+      - "registry"
+      summary: "Get an image by tag"
+      description: "Gets an image by service and tag from the registry"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name"
+        required: true
+        type: "string"
+      - name: "tag"
+        in: "path"
+        description: "Image tag"
+        required: true
+        type: "string"
+      responses:
+        200:
+          description: "Image retrieved successfully"
+          schema:
+            type: "object"
+            properties:
+              id:
+                type: "integer"
+                format: "int64"
+                description: "Image ID"
+              service:
+                type: "string"
+                description: "Service name"
+              tag:
+                type: "string"
+                description: "Image tag"
+              commit:
+                type: "string"
+                description: "Git commit hash"
+              branch:
+                type: "string"
+                description: "Git branch"
+              buildTime:
+                type: "string"
+                format: "date-time"
+                description: "Build timestamp"
+              status:
+                type: "string"
+                description: "Build status"
+              registry:
+                type: "string"
+                description: "Docker registry URL"
+              imageName:
+                type: "string"
+                description: "Docker image name"
+        404:
+          description: "Image not found"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/images:
+    post:
+      tags:
+      - "registry"
+      summary: "Record an image"
+      description: "Records metadata about a built Docker image"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        description: "Image metadata"
+        required: true
+        schema:
+          type: "object"
+          properties:
+            service:
+              type: "string"
+              description: "Service name"
+            tag:
+              type: "string"
+              description: "Image tag"
+            commit:
+              type: "string"
+              description: "Git commit hash"
+            branch:
+              type: "string"
+              description: "Git branch"
+            buildTime:
+              type: "string"
+              format: "date-time"
+              description: "Build timestamp"
+            status:
+              type: "string"
+              description: "Build status"
+            registry:
+              type: "string"
+              description: "Docker registry URL"
+            imageName:
+              type: "string"
+              description: "Docker image name"
+          required:
+          - "service"
+          - "tag"
+          - "commit"
+          - "branch"
+          - "status"
+          - "registry"
+          - "imageName"
+      responses:
+        200:
+          description: "Image recorded successfully"
+          schema:
+            type: "object"
+            properties:
+              message:
+                type: "string"
+                description: "Success message"
+              service:
+                type: "string"
+                description: "Service name"
+              tag:
+                type: "string"
+                description: "Image tag"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry/images/{id}:
+    delete:
+      tags:
+      - "registry"
+      summary: "Delete an image"
+      description: "Deletes an image from the registry by ID"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "id"
+        in: "path"
+        description: "Image ID"
+        required: true
+        type: "integer"
+        format: "int64"
+      responses:
+        200:
+          description: "Image deleted successfully"
+          schema:
+            type: "object"
+            properties:
+              message:
+                type: "string"
+                description: "Success message"
+              id:
+                type: "integer"
+                format: "int64"
+                description: "Image ID"
+        400:
+          description: "Invalid request"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+        500:
+          description: "Server error"
+          schema:
+            type: "object"
+            properties:
+              error:
+                type: "string"
+                description: "Error message"
+  /registry-connector/authenticate:
+    post:
+      tags:
+      - "registry-connector"
+      summary: "Authenticate with a Docker registry"
+      description: "Authenticates with a Docker registry and returns a token"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "body"
+        description: "Registry configuration"
+        required: true
+        schema:
+          type: "object"
+          properties:
+            type:
+              type: "string"
+              description: "Registry type (dockerhub, harbor, generic)"
+            url:
+              type: "string"
+              description: "Registry URL"
+            username:
+              type: "string"
+              description:

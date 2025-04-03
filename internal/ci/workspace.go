@@ -2,65 +2,60 @@ package ci
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"os/user"
-	"path/filepath"
 	"fmt"
 	"log"
-	//"strings" 
+	"os"
+	"os/exec"
+
+	//"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"gopkg.in/yaml.v3"
 )
 
 func NewWorkspaceFromGit(root, url, branch string) (*workspaceImpl, error) {
-    dir, err := os.MkdirTemp(root, "workspace")
-    if err != nil {
-        return nil, fmt.Errorf("failed to create temp directory: %w", err)
-    }
+	dir, err := os.MkdirTemp(root, "workspace")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
 
-    usr, err := user.Current()
-    if err != nil {
-        return nil, fmt.Errorf("failed to get current user: %w", err)
-    }
+	// usr, err := user.Current()
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get current user: %w", err)
+	// }
 
-    // Try multiple possible SSH key locations
-    possibleKeyPaths := []string{
-        filepath.Join(usr.HomeDir, ".ssh", "id_rsa"),
-        filepath.Join(usr.HomeDir, ".ssh", "id_ed25519"),
-		filepath.Join(usr.HomeDir, ".ssh", "vnist_e25519"),
-        // Add other potential paths if needed
-    }
+	// // Try multiple possible SSH key locations
+	// possibleKeyPaths := []string{
+	// 	filepath.Join(usr.HomeDir, ".ssh", "vnist_e25519"),
+	// 	// Add other potential paths if needed
+	// }
 
-    var sshAuth *ssh.PublicKeys
-    var lastErr error
+	// var sshAuth *ssh.PublicKeys
+	// var lastErr error
 
-    for _, keyPath := range possibleKeyPaths {
-        if _, err := os.Stat(keyPath); err == nil {
-            sshAuth, err = ssh.NewPublicKeysFromFile("git", keyPath, "")
-            if err == nil {
-                // Successfully loaded the key
-                break
-            }
-            lastErr = err
-        }
-    }
+	// for _, keyPath := range possibleKeyPaths {
+	// 	if _, err := os.Stat(keyPath); err == nil {
+	// 		sshAuth, err = ssh.NewPublicKeysFromFile("git", keyPath, "")
+	// 		if err == nil {
+	// 			// Successfully loaded the key
+	// 			break
+	// 		}
+	// 		lastErr = err
+	// 	}
+	// }
 
-    if sshAuth == nil {
-        if lastErr != nil {
-            return nil, fmt.Errorf("failed to load any SSH key: %w", lastErr)
-        }
-        return nil, fmt.Errorf("no SSH keys found in ~/.ssh/id_rsa or ~/.ssh/id_ed25519")
-    }
-	
+	// if sshAuth == nil {
+	// 	if lastErr != nil {
+	// 		return nil, fmt.Errorf("failed to load any SSH key: %w", lastErr)
+	// 	}
+	// 	return nil, fmt.Errorf("no SSH keys found in ~/.ssh/id_rsa or ~/.ssh/id_ed25519")
+	// }
 
-    // Debug output for troubleshooting
-    log.Printf("Cloning repository %s (branch: %s) to %s", url, branch, dir)
+	// Debug output for troubleshooting
+	log.Printf("Cloning repository %s (branch: %s) to %s", url, branch, dir)
 
-    // Use HTTPS URL instead of SSH URL
+	// Use HTTPS URL instead of SSH URL
 	//httpURL := strings.Replace(url, "git@github.com:", "https://github.com/", 1)
 	//log.Printf("Falling back to HTTPS URL: %s", httpURL)
 
@@ -70,21 +65,21 @@ func NewWorkspaceFromGit(root, url, branch string) (*workspaceImpl, error) {
 		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		Depth:             1,
 	})
-    if err != nil {
-        return nil, fmt.Errorf("git clone failed: %w", err)
-    }
+	if err != nil {
+		return nil, fmt.Errorf("git clone failed: %w", err)
+	}
 
-    ref, err := repo.Head()
-    if err != nil {
-        return nil, fmt.Errorf("failed to get repository head: %w", err)
-    }
+	ref, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository head: %w", err)
+	}
 
-    return &workspaceImpl{
-        dir:    dir,
-        branch: branch,
-        commit: ref.Hash().String(),
-        env:    []string{},
-    }, nil
+	return &workspaceImpl{
+		dir:    dir,
+		branch: branch,
+		commit: ref.Hash().String(),
+		env:    []string{},
+	}, nil
 }
 
 func NewWorkspaceFromDir(dir string) (*workspaceImpl, error) {
@@ -137,7 +132,6 @@ func (ws *workspaceImpl) LoadPipeline(yamlContent []byte) (*Pipeline, error) {
 	}
 	return &pipeline, nil
 }
-
 
 func (ws *workspaceImpl) ExecuteCommand(ctx context.Context, cmd string, args []string) ([]byte, error) {
 	command := exec.CommandContext(ctx, cmd, args...)
