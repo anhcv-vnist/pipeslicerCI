@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -36,6 +37,8 @@ func SetupRepository(app *fiber.App) {
 	repositoryGroup.Put("/:id", updateRepository(manager))
 	repositoryGroup.Delete("/:id", deleteRepository(manager))
 	repositoryGroup.Post("/:id/checkout", checkoutBranch(manager))
+	repositoryGroup.Get("/:id/commits", getBranchCommits(manager))
+	repositoryGroup.Post("/:id/sync", syncRepository(manager))
 }
 
 // RepositoryResponse represents a repository in API responses
@@ -263,6 +266,60 @@ func checkoutBranch(manager *repository.RepositoryManager) fiber.Handler {
 
 		return c.JSON(fiber.Map{
 			"message": "Branch checked out successfully",
+		})
+	}
+}
+
+// getBranchCommits returns a handler for getting commits of a specific branch
+func getBranchCommits(manager *repository.RepositoryManager) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Get repository ID from path parameter
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Invalid repository ID",
+			})
+		}
+
+		// Get branch name from query parameter
+		branch := c.Query("branch")
+		if branch == "" {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Branch name is required. Use ?branch=your-branch-name",
+			})
+		}
+
+		// Get commits for the branch
+		commits, err := manager.GetBranchCommits(c.Context(), int64(id), branch)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to get branch commits: " + err.Error(),
+			})
+		}
+
+		return c.JSON(commits)
+	}
+}
+
+// syncRepository returns a handler for syncing a repository with its remote
+func syncRepository(manager *repository.RepositoryManager) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Invalid repository ID",
+			})
+		}
+
+		err = manager.SyncRepository(c.Context(), id)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to sync repository: " + err.Error(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"message": "Repository synced successfully",
 		})
 	}
 }
