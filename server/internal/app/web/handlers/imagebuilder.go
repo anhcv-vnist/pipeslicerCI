@@ -34,6 +34,7 @@ func SetupImageBuilder(app *fiber.App) {
 	imageBuilderGroup.Post("/build", postBuildImage(repoManager))
 	imageBuilderGroup.Post("/build-multiple", postBuildMultipleImages(repoManager))
 	imageBuilderGroup.Post("/detect-changes", postDetectChanges(repoManager))
+	imageBuilderGroup.Post("/detect-commit-changes", postDetectCommitChanges(repoManager))
 	imageBuilderGroup.Get("/branches", getBranches(repoManager))
 }
 
@@ -310,19 +311,78 @@ func postDetectChanges(repoManager *repository.RepositoryManager) fiber.Handler 
 		if err != nil {
 			log.Printf("Failed to checkout branch: %v", err)
 			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to checkout branch: " + err.Error(),
+				"error": "Failed to detect changed services: " + err.Error(),
 			})
 		}
 
-		// Verify current branch after checkout
-		cmd = exec.Command("git", "branch", "--show-current")
-		cmd.Dir = repo.LocalPath
-		currentBranch, err := cmd.Output()
+		// Create workspace from repository
+		ws, err := ci.NewWorkspaceFromPath(repo.LocalPath)
 		if err != nil {
-			log.Printf("Failed to get current branch: %v", err)
-		} else {
-			log.Printf("Current branch after checkout: %s", string(currentBranch))
+			log.Printf("Failed to create workspace: %v", err)
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to create workspace: " + err.Error(),
+			})
 		}
+
+		// Create image builder
+		builder := imagebuilder.NewImageBuilder(ws, req.Registry, req.Username, req.Password)
+
+		// Detect changed services
+		changedServices, err := builder.DetectChangedServices(c.Context(), req.BaseBranch, req.CurrentBranch)
+		if err != nil {
+			log.Printf("Failed to detect changed services: %v", err)
+			return c.Status(500).JSON(fiber.Map{
+				"error": "Failed to detect changed services: " + err.Error(),
+			})
+		}
+
+		log.Printf("Detected changed services: %v", changedServices)
+
+		return c.JSON(fiber.Map{
+			"changedServices": changedServices,
+		})
+	}
+}
+
+// DetectCommitChangesRequest represents the request body for detecting changed services between commits
+type DetectCommitChangesRequest struct {
+	URL           string `json:"url" form:"url"`
+	BaseCommit    string `json:"baseCommit" form:"baseCommit"`
+	CurrentCommit string `json:"currentCommit" form:"currentCommit"`
+	Registry      string `json:"registry" form:"registry"`
+	Username      string `json:"username" form:"username"`
+	Password      string `json:"password" form:"password"`
+}
+
+// postDetectCommitChanges handles requests to detect which services have changed between commits
+func postDetectCommitChanges(repoManager *repository.RepositoryManager) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req DetectCommitChangesRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Invalid request body: " + err.Error(),
+			})
+		}
+
+		// Validate required fields
+		if req.URL == "" || req.BaseCommit == "" || req.CurrentCommit == "" {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Missing required fields: url, baseCommit, and currentCommit are required",
+			})
+		}
+
+		log.Printf("Detecting changes between commits %s and %s in %s", req.BaseCommit, req.CurrentCommit, req.URL)
+
+		// Get repository from database
+		repo, err := repoManager.GetRepositoryByURL(c.Context(), req.URL)
+		if err != nil {
+			log.Printf("Repository not found in database: %v", err)
+			return c.Status(404).JSON(fiber.Map{
+				"error": "Repository not found in database. Please clone it first using the repository API.",
+			})
+		}
+
+		log.Printf("Repository found at: %s", repo.LocalPath)
 
 		// Create workspace from repository
 		ws, err := ci.NewWorkspaceFromPath(repo.LocalPath)
@@ -339,7 +399,7 @@ func postDetectChanges(repoManager *repository.RepositoryManager) fiber.Handler 
 		builder := imagebuilder.NewImageBuilder(ws, req.Registry, req.Username, req.Password)
 
 		// Detect changed services
-		changedServices, err := builder.DetectChangedServices(c.Context(), req.BaseBranch, req.CurrentBranch)
+		changedServices, err := builder.DetectChangedServices(c.Context(), req.BaseCommit, req.CurrentCommit)
 		if err != nil {
 			log.Printf("Failed to detect changed services: %v", err)
 			return c.Status(500).JSON(fiber.Map{

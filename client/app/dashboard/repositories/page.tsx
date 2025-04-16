@@ -23,10 +23,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
 import { AddRepositoryDialog } from './components/add-repository-dialog';
-import { ChevronDown, GitBranch, Globe, Laptop, MoreHorizontal, ChevronUp, GitCommit, ChevronRight, RotateCw } from 'lucide-react';
+import { ChevronDown, GitBranch, Globe, Laptop, MoreHorizontal, ChevronUp, GitCommit, ChevronRight, RotateCw, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const formatDate = (dateString: string) => {
@@ -176,11 +183,19 @@ const BranchList = ({ branches, title, icon: Icon, repositoryId, onBranchesChang
     setLocalBranches(branches);
   }, [branches]);
 
-  // Sort branches to show current branch first
+  // Sort branches to show current branch first, then main/master, then alphabetically
   const sortedBranches = [...localBranches].sort((a, b) => {
+    // Current branch always comes first
     if (a.isCurrent) return -1;
     if (b.isCurrent) return 1;
-    return 0;
+
+    // Main and master branches come next
+    const isMainOrMaster = (name: string) => name.toLowerCase() === 'main' || name.toLowerCase() === 'master';
+    if (isMainOrMaster(a.name) && !isMainOrMaster(b.name)) return -1;
+    if (!isMainOrMaster(a.name) && isMainOrMaster(b.name)) return 1;
+
+    // Sort the rest alphabetically
+    return a.name.localeCompare(b.name);
   });
 
   const displayedBranches = sortedBranches.slice(0, displayCount);
@@ -369,7 +384,17 @@ export default function RepositoriesPage() {
   const [loading, setLoading] = useState(true);
   const [expandedRepo, setExpandedRepo] = useState<number | null>(null);
   const [syncingRepo, setSyncingRepo] = useState<number | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const { toast } = useToast();
+
+  // Sort repositories based on current sort order
+  const sortedRepositories = [...repositories].sort((a, b) => {
+    if (sortOrder === 'asc') {
+      return a.name.localeCompare(b.name);
+    } else {
+      return b.name.localeCompare(a.name);
+    }
+  });
 
   const fetchRepositories = async () => {
     try {
@@ -474,7 +499,31 @@ export default function RepositoriesPage() {
   return (
     <div className="container mx-auto py-10">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Repositories</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-bold">Repositories</h1>
+          <Select
+            value={sortOrder}
+            onValueChange={(value: 'asc' | 'desc') => setSortOrder(value)}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by name" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="asc">
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="h-4 w-4" />
+                  <span>Name (A-Z)</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="desc">
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="h-4 w-4 rotate-180" />
+                  <span>Name (Z-A)</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <AddRepositoryDialog onRepositoryAdded={fetchRepositories} />
       </div>
       <div className="rounded-md border">
@@ -490,7 +539,7 @@ export default function RepositoriesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {repositories.map((repo) => (
+            {sortedRepositories.map((repo) => (
               <>
                 <TableRow key={repo.id}>
                   <TableCell>

@@ -1,4 +1,4 @@
-import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest } from './types';
+import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest, DetectChangesRequest, DetectChangesResponse, DetectCommitChangesRequest, DetectCommitChangesResponse } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -12,13 +12,32 @@ export async function listRepositories(): Promise<Repository[]> {
 }
 
 export async function getRepositoryBranches(id: number): Promise<Branch[]> {
-  const repo = await fetch(`${API_BASE_URL}/repository/${id}`).then(res => res.json());
-  const response = await fetch(`${API_BASE_URL}/imagebuilder/branches?url=${encodeURIComponent(repo.url)}`);
-  if (!response.ok) {
-    throw new Error('Failed to fetch repository branches');
+  try {
+    // First get the repository details
+    const repoResponse = await fetch(`${API_BASE_URL}/repository/${id}`);
+    if (!repoResponse.ok) {
+      throw new Error('Failed to fetch repository details');
+    }
+    const repo = await repoResponse.json();
+    console.log('Repository details:', repo);
+
+    // Then get the branches
+    const branchesResponse = await fetch(`${API_BASE_URL}/imagebuilder/branches?url=${encodeURIComponent(repo.url)}`);
+    if (!branchesResponse.ok) {
+      throw new Error('Failed to fetch repository branches');
+    }
+    const data = await branchesResponse.json();
+    console.log('Branches data:', data);
+
+    if (!data.branches || !Array.isArray(data.branches)) {
+      throw new Error('Invalid branches data received');
+    }
+
+    return data.branches;
+  } catch (error) {
+    console.error('Error in getRepositoryBranches:', error);
+    throw error;
   }
-  const data = await response.json();
-  return data.branches;
 }
 
 export async function cloneRepository(request: CloneRepositoryRequest): Promise<Repository> {
@@ -76,4 +95,44 @@ export const syncRepository = async (repositoryId: number): Promise<void> => {
     const errorData = await response.json();
     throw new Error(errorData.error || 'Failed to sync repository');
   }
+};
+
+export const detectChanges = async (request: DetectChangesRequest): Promise<DetectChangesResponse> => {
+  const response = await fetch(`${API_BASE_URL}/imagebuilder/detect-changes`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to detect changes');
+  }
+
+  const data = await response.json();
+  return {
+    changedServices: data.changedServices || [],
+  };
+};
+
+export const detectCommitChanges = async (request: DetectCommitChangesRequest): Promise<DetectCommitChangesResponse> => {
+  const response = await fetch(`${API_BASE_URL}/imagebuilder/detect-commit-changes`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to detect commit changes');
+  }
+
+  const data = await response.json();
+  return {
+    changedServices: data.changedServices || [],
+  };
 }; 

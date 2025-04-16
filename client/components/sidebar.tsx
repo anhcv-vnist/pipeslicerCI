@@ -3,13 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Settings, Container } from "lucide-react";
 
 const navigation = [
   {
     name: "Repositories",
     href: "/dashboard/repositories",
     icon: GitBranch,
+  },
+  {
+    name: "Image Builder",
+    href: "/dashboard/image-builder",
+    icon: Container,
+  },
+  {
+    name: "Settings",
+    href: "/dashboard/settings",
+    icon: Settings,
   },
 ];
 

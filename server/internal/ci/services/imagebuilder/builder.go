@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,4 +244,206 @@ func (b *ImageBuilder) DetectChangedServices(ctx context.Context, baseBranch, cu
 	}
 
 	return changedServices, nil
+}
+
+// DetectChangedServicesBetweenCommits analyzes git changes between two commits to determine which services need to be rebuilt
+func (b *ImageBuilder) DetectChangedServicesBetweenCommits(ctx context.Context, baseCommit, currentCommit string) ([]string, error) {
+	// Log the commits being compared
+	fmt.Printf("Comparing commits: %s -> %s\n", baseCommit, currentCommit)
+
+	// Ensure baseCommit is before currentCommit
+	err := b.ensureCommitOrder(ctx, &baseCommit, &currentCommit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate commit order: %w", err)
+	}
+
+	// Fetch the specific commits without creating local branches
+	// Use --depth=1 to avoid creating local branches
+	fetchCmd := []string{"git", "fetch", "origin", baseCommit + ":" + baseCommit, currentCommit + ":" + currentCommit, "--depth=1"}
+	fetchOutput, err := b.workspace.ExecuteCommand(ctx, fetchCmd[0], fetchCmd[1:])
+	if err != nil {
+		// If fetch fails, try a different approach - fetch all with depth=1
+		fetchAllCmd := []string{"git", "fetch", "--all", "--depth=1"}
+		fetchAllOutput, err := b.workspace.ExecuteCommand(ctx, fetchAllCmd[0], fetchAllCmd[1:])
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch commits: %s\n%w", string(fetchAllOutput), err)
+		}
+		fmt.Printf("Fetch all output: %s\n", string(fetchAllOutput))
+	} else {
+		fmt.Printf("Fetch output: %s\n", string(fetchOutput))
+	}
+
+	// Get the diff between the two commits
+	// Use git diff with explicit commit hashes
+	diffCmd := []string{"git", "diff", "--name-only", baseCommit, currentCommit}
+	fmt.Printf("Executing command: %s %s\n", diffCmd[0], strings.Join(diffCmd[1:], " "))
+	diffOutput, err := b.workspace.ExecuteCommand(ctx, diffCmd[0], diffCmd[1:])
+	if err != nil {
+		fmt.Printf("Error running git diff: %v\n", err)
+		// If diff fails, try an alternative approach using git log
+		logCmd := []string{"git", "log", "--name-only", "--pretty=format:", baseCommit + ".." + currentCommit}
+		fmt.Printf("Trying alternative command: %s %s\n", logCmd[0], strings.Join(logCmd[1:], " "))
+		logOutput, err := b.workspace.ExecuteCommand(ctx, logCmd[0], logCmd[1:])
+		if err != nil {
+			return nil, fmt.Errorf("failed to get changes between commits: %w", err)
+		}
+		diffOutput = logOutput
+	}
+
+	// Log the output of the git command
+	fmt.Printf("Git command output: %s\n", string(diffOutput))
+
+	// Parse the output to get changed files
+	changedFiles := strings.Split(string(diffOutput), "\n")
+	fmt.Printf("Changed files: %v\n", changedFiles)
+
+	// If no files were found, try another approach
+	if len(changedFiles) == 0 || (len(changedFiles) == 1 && changedFiles[0] == "") {
+		fmt.Println("No changed files found with first method, trying alternative approach")
+
+		// Try using git show to get the files changed in the current commit
+		showCmd := []string{"git", "show", "--name-only", "--pretty=format:", currentCommit}
+		fmt.Printf("Trying git show: %s %s\n", showCmd[0], strings.Join(showCmd[1:], " "))
+		showOutput, err := b.workspace.ExecuteCommand(ctx, showCmd[0], showCmd[1:])
+		if err != nil {
+			fmt.Printf("Error running git show: %v\n", err)
+			// If all methods fail, return empty list
+			return []string{}, nil
+		}
+
+		changedFiles = strings.Split(string(showOutput), "\n")
+		fmt.Printf("Files from git show: %v\n", changedFiles)
+
+		if len(changedFiles) == 0 || (len(changedFiles) == 1 && changedFiles[0] == "") {
+			fmt.Println("No changed files found with any method")
+			return []string{}, nil
+		}
+	}
+
+	// Map to store unique services that need rebuilding
+	serviceMap := make(map[string]bool)
+
+	// Analyze changed files to determine affected services
+	for _, file := range changedFiles {
+		if file == "" {
+			continue
+		}
+
+		fmt.Printf("Analyzing changed file: %s\n", file)
+
+		// Check if the file is in a service directory
+		// This assumes a structure like micro-services/service-name/...
+		parts := strings.Split(file, "/")
+		if len(parts) >= 2 && parts[0] == "micro-services" {
+			servicePath := filepath.Join(parts[0], parts[1])
+			fmt.Printf("Found service: %s\n", servicePath)
+			serviceMap[servicePath] = true
+		}
+
+		// Check for changes in shared libraries or configuration
+		if strings.HasPrefix(file, "shared/") || file == "docker-compose.yml" {
+			fmt.Println("Found change in shared code or configuration, marking all services as changed")
+			// If shared code changes, we might need to rebuild all services
+			// This is a simplified approach - in a real system, you'd have a more sophisticated dependency analysis
+			lsCmd := []string{"find", "micro-services", "-maxdepth", "1", "-type", "d", "-not", "-path", "micro-services"}
+			lsOutput, err := b.workspace.ExecuteCommand(ctx, lsCmd[0], lsCmd[1:])
+			if err != nil {
+				return nil, fmt.Errorf("failed to list services: %w", err)
+			}
+
+			services := strings.Split(string(lsOutput), "\n")
+			for _, service := range services {
+				if service != "" {
+					serviceMap[service] = true
+				}
+			}
+			break
+		}
+	}
+
+	// Convert map to slice
+	var changedServices []string
+	for service := range serviceMap {
+		changedServices = append(changedServices, service)
+	}
+
+	fmt.Printf("Final list of changed services: %v\n", changedServices)
+	return changedServices, nil
+}
+
+// ensureCommitOrder ensures that baseCommit is before currentCommit
+// If not, it swaps them and returns an error if validation fails
+func (b *ImageBuilder) ensureCommitOrder(ctx context.Context, baseCommit, currentCommit *string) error {
+	// First, check if both commits exist
+	if err := b.checkCommitExists(ctx, *baseCommit); err != nil {
+		return fmt.Errorf("base commit does not exist: %w", err)
+	}
+
+	if err := b.checkCommitExists(ctx, *currentCommit); err != nil {
+		return fmt.Errorf("current commit does not exist: %w", err)
+	}
+
+	// Check if the commits are in the correct chronological order
+	isBaseBeforeCurrent, err := b.isCommitBefore(ctx, *baseCommit, *currentCommit)
+	if err != nil {
+		return fmt.Errorf("failed to determine commit order: %w", err)
+	}
+
+	if !isBaseBeforeCurrent {
+		fmt.Printf("Swapping commits: %s is not before %s\n", *baseCommit, *currentCommit)
+		// Swap the commits
+		temp := *baseCommit
+		*baseCommit = *currentCommit
+		*currentCommit = temp
+		fmt.Printf("New order: %s -> %s\n", *baseCommit, *currentCommit)
+	}
+
+	return nil
+}
+
+// checkCommitExists checks if a commit exists in the repository
+func (b *ImageBuilder) checkCommitExists(ctx context.Context, commit string) error {
+	// Use git rev-parse to check if the commit exists without creating a branch
+	cmd := []string{"git", "rev-parse", "--verify", commit + "^{commit}"}
+	_, err := b.workspace.ExecuteCommand(ctx, cmd[0], cmd[1:])
+	if err != nil {
+		return fmt.Errorf("commit %s does not exist: %w", commit, err)
+	}
+	return nil
+}
+
+// isCommitBefore checks if the first commit is chronologically before the second commit
+func (b *ImageBuilder) isCommitBefore(ctx context.Context, commit1, commit2 string) (bool, error) {
+	// Get the commit dates
+	date1, err := b.getCommitDate(ctx, commit1)
+	if err != nil {
+		return false, err
+	}
+
+	date2, err := b.getCommitDate(ctx, commit2)
+	if err != nil {
+		return false, err
+	}
+
+	// Compare the dates
+	return date1.Before(date2), nil
+}
+
+// getCommitDate gets the commit date for a given commit hash
+func (b *ImageBuilder) getCommitDate(ctx context.Context, commit string) (time.Time, error) {
+	// Get the commit date using git show
+	cmd := []string{"git", "show", "-s", "--format=%ct", commit}
+	output, err := b.workspace.ExecuteCommand(ctx, cmd[0], cmd[1:])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get commit date: %w", err)
+	}
+
+	// Parse the timestamp
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse commit timestamp: %w", err)
+	}
+
+	// Convert to time.Time
+	return time.Unix(timestamp, 0), nil
 }
