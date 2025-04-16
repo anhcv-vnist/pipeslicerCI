@@ -22,6 +22,28 @@ interface ChangedService {
 
 const BRANCHES_PER_PAGE = 20;
 
+// Helper function to safely access localStorage
+const getLocalStorageItem = (key: string): string | null => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(key);
+  }
+  return null;
+};
+
+// Helper function to safely set localStorage
+const setLocalStorageItem = (key: string, value: string): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(key, value);
+  }
+};
+
+// Helper function to safely remove localStorage
+const removeLocalStorageItem = (key: string): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(key);
+  }
+};
+
 // Move BranchSelect component outside of the main component
 const BranchSelect = ({ 
   value, 
@@ -155,81 +177,83 @@ const BranchSelect = ({
 
 export default function ImageBuilderPage() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [selectedRepo, setSelectedRepo] = useState<Repository | null>(() => {
-    const saved = localStorage.getItem('selectedRepo');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
   const [allBranches, setAllBranches] = useState<Branch[]>([]);
   const [displayedLocalBranches, setDisplayedLocalBranches] = useState<Branch[]>([]);
   const [displayedRemoteBranches, setDisplayedRemoteBranches] = useState<Branch[]>([]);
-  const [baseBranch, setBaseBranch] = useState<string>(() => {
-    return localStorage.getItem('baseBranch') || '';
-  });
-  const [currentBranch, setCurrentBranch] = useState<string>(() => {
-    return localStorage.getItem('currentBranch') || '';
-  });
-  const [baseCommit, setBaseCommit] = useState<string>(() => {
-    return localStorage.getItem('baseCommit') || '';
-  });
-  const [currentCommit, setCurrentCommit] = useState<string>(() => {
-    return localStorage.getItem('currentCommit') || '';
-  });
+  const [baseBranch, setBaseBranch] = useState<string>('');
+  const [currentBranch, setCurrentBranch] = useState<string>('');
+  const [baseCommit, setBaseCommit] = useState<string>('');
+  const [currentCommit, setCurrentCommit] = useState<string>('');
   const [changedServices, setChangedServices] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
-  const [activeComparison, setActiveComparison] = useState<'branch' | 'commit' | null>(() => {
-    return localStorage.getItem('activeComparison') as 'branch' | 'commit' | null;
-  });
+  const [activeComparison, setActiveComparison] = useState<'branch' | 'commit' | null>(null);
   const [branchValidationAttempted, setBranchValidationAttempted] = useState(false);
   const [commitValidationAttempted, setCommitValidationAttempted] = useState(false);
+  const [isClient, setIsClient] = useState(false);
   const { toast } = useToast();
+
+  // Load saved state after component mounts
+  useEffect(() => {
+    setIsClient(true);
+    const savedRepo = getLocalStorageItem('selectedRepo');
+    if (savedRepo) {
+      setSelectedRepo(JSON.parse(savedRepo));
+    }
+    setBaseBranch(getLocalStorageItem('baseBranch') || '');
+    setCurrentBranch(getLocalStorageItem('currentBranch') || '');
+    setBaseCommit(getLocalStorageItem('baseCommit') || '');
+    setCurrentCommit(getLocalStorageItem('currentCommit') || '');
+    setActiveComparison(getLocalStorageItem('activeComparison') as 'branch' | 'commit' | null);
+  }, []);
 
   // Save state to localStorage when it changes
   useEffect(() => {
     if (selectedRepo) {
-      localStorage.setItem('selectedRepo', JSON.stringify(selectedRepo));
+      setLocalStorageItem('selectedRepo', JSON.stringify(selectedRepo));
     } else {
-      localStorage.removeItem('selectedRepo');
+      removeLocalStorageItem('selectedRepo');
     }
   }, [selectedRepo]);
 
   useEffect(() => {
     if (baseBranch) {
-      localStorage.setItem('baseBranch', baseBranch);
+      setLocalStorageItem('baseBranch', baseBranch);
     } else {
-      localStorage.removeItem('baseBranch');
+      removeLocalStorageItem('baseBranch');
     }
   }, [baseBranch]);
 
   useEffect(() => {
     if (currentBranch) {
-      localStorage.setItem('currentBranch', currentBranch);
+      setLocalStorageItem('currentBranch', currentBranch);
     } else {
-      localStorage.removeItem('currentBranch');
+      removeLocalStorageItem('currentBranch');
     }
   }, [currentBranch]);
 
   useEffect(() => {
     if (baseCommit) {
-      localStorage.setItem('baseCommit', baseCommit);
+      setLocalStorageItem('baseCommit', baseCommit);
     } else {
-      localStorage.removeItem('baseCommit');
+      removeLocalStorageItem('baseCommit');
     }
   }, [baseCommit]);
 
   useEffect(() => {
     if (currentCommit) {
-      localStorage.setItem('currentCommit', currentCommit);
+      setLocalStorageItem('currentCommit', currentCommit);
     } else {
-      localStorage.removeItem('currentCommit');
+      removeLocalStorageItem('currentCommit');
     }
   }, [currentCommit]);
 
   useEffect(() => {
     if (activeComparison) {
-      localStorage.setItem('activeComparison', activeComparison);
+      setLocalStorageItem('activeComparison', activeComparison);
     } else {
-      localStorage.removeItem('activeComparison');
+      removeLocalStorageItem('activeComparison');
     }
   }, [activeComparison]);
 
@@ -328,8 +352,8 @@ export default function ImageBuilderPage() {
     setDisplayedRemoteBranches([]);
     
     // Clear localStorage for branch-related items when changing repository
-    localStorage.removeItem('baseBranch');
-    localStorage.removeItem('currentBranch');
+    removeLocalStorageItem('baseBranch');
+    removeLocalStorageItem('currentBranch');
     
     if (repo) {
       console.log('Selected repository:', repo);
@@ -361,9 +385,9 @@ export default function ImageBuilderPage() {
     setChangedServices(null);
     setActiveComparison(null);
     setBranchValidationAttempted(false);
-    localStorage.removeItem('baseBranch');
-    localStorage.removeItem('currentBranch');
-    localStorage.removeItem('activeComparison');
+    removeLocalStorageItem('baseBranch');
+    removeLocalStorageItem('currentBranch');
+    removeLocalStorageItem('activeComparison');
   };
 
   const clearCommitComparison = () => {
@@ -372,9 +396,9 @@ export default function ImageBuilderPage() {
     setChangedServices(null);
     setActiveComparison(null);
     setCommitValidationAttempted(false);
-    localStorage.removeItem('baseCommit');
-    localStorage.removeItem('currentCommit');
-    localStorage.removeItem('activeComparison');
+    removeLocalStorageItem('baseCommit');
+    removeLocalStorageItem('currentCommit');
+    removeLocalStorageItem('activeComparison');
   };
 
   const handleDetectChanges = async () => {
@@ -512,24 +536,26 @@ export default function ImageBuilderPage() {
         <div className="p-6">
           <div className="space-y-4">
             <h2 className="text-2xl font-bold tracking-tight">Repository Selection</h2>
-            <Select
-              value={selectedRepo?.id.toString()}
-              onValueChange={handleRepositoryChange}
-            >
-              <SelectTrigger className="w-full h-12">
-                <SelectValue placeholder="Select a repository" />
-              </SelectTrigger>
-              <SelectContent>
-                {repositories.map((repo) => (
-                  <SelectItem key={repo.id} value={repo.id.toString()}>
-                    <div className="flex items-center gap-2">
-                      <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      <span>{repo.name}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {isClient && (
+              <Select
+                value={selectedRepo?.id.toString()}
+                onValueChange={handleRepositoryChange}
+              >
+                <SelectTrigger className="w-full h-12">
+                  <SelectValue placeholder="Select a repository" />
+                </SelectTrigger>
+                <SelectContent>
+                  {repositories.map((repo) => (
+                    <SelectItem key={repo.id} value={repo.id.toString()}>
+                      <div className="flex items-center gap-2">
+                        <GitBranch className="h-4 w-4 text-muted-foreground" />
+                        <span>{repo.name}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {repositories.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 No repositories found. Please add repositories in the Repositories tab.
@@ -588,19 +614,21 @@ export default function ImageBuilderPage() {
                 <GitBranch className="h-5 w-5 text-muted-foreground" />
                 <h3 className="text-lg font-medium">Base Branch</h3>
               </div>
-              <BranchSelect
-                value={baseBranch}
-                onValueChange={setBaseBranch}
-                placeholder="Select base branch"
-                excludeBranch={currentBranch}
-                displayedLocalBranches={displayedLocalBranches}
-                displayedRemoteBranches={displayedRemoteBranches}
-                allBranches={allBranches}
-                loadingBranches={loadingBranches}
-                onShowMoreLocal={handleShowMoreLocal}
-                onShowMoreRemote={handleShowMoreRemote}
-                disabled={activeComparison === 'commit'}
-              />
+              {isClient && (
+                <BranchSelect
+                  value={baseBranch}
+                  onValueChange={setBaseBranch}
+                  placeholder="Select base branch"
+                  excludeBranch={currentBranch}
+                  displayedLocalBranches={displayedLocalBranches}
+                  displayedRemoteBranches={displayedRemoteBranches}
+                  allBranches={allBranches}
+                  loadingBranches={loadingBranches}
+                  onShowMoreLocal={handleShowMoreLocal}
+                  onShowMoreRemote={handleShowMoreRemote}
+                  disabled={activeComparison === 'commit'}
+                />
+              )}
             </div>
 
             <div className="space-y-4">
@@ -608,19 +636,21 @@ export default function ImageBuilderPage() {
                 <GitBranch className="h-5 w-5 text-muted-foreground" />
                 <h3 className="text-lg font-medium">Current Branch</h3>
               </div>
-              <BranchSelect
-                value={currentBranch}
-                onValueChange={setCurrentBranch}
-                placeholder="Select current branch"
-                excludeBranch={baseBranch}
-                displayedLocalBranches={displayedLocalBranches}
-                displayedRemoteBranches={displayedRemoteBranches}
-                allBranches={allBranches}
-                loadingBranches={loadingBranches}
-                onShowMoreLocal={handleShowMoreLocal}
-                onShowMoreRemote={handleShowMoreRemote}
-                disabled={activeComparison === 'commit'}
-              />
+              {isClient && (
+                <BranchSelect
+                  value={currentBranch}
+                  onValueChange={setCurrentBranch}
+                  placeholder="Select current branch"
+                  excludeBranch={baseBranch}
+                  displayedLocalBranches={displayedLocalBranches}
+                  displayedRemoteBranches={displayedRemoteBranches}
+                  allBranches={allBranches}
+                  loadingBranches={loadingBranches}
+                  onShowMoreLocal={handleShowMoreLocal}
+                  onShowMoreRemote={handleShowMoreRemote}
+                  disabled={activeComparison === 'commit'}
+                />
+              )}
             </div>
           </div>
 
@@ -697,13 +727,15 @@ export default function ImageBuilderPage() {
                 <GitCommit className="h-5 w-5 text-muted-foreground" />
                 <h3 className="text-lg font-medium">Base Commit</h3>
               </div>
-              <Input
-                placeholder="Enter base commit hash"
-                value={baseCommit}
-                onChange={(e) => setBaseCommit(e.target.value)}
-                className="h-12"
-                disabled={activeComparison === 'branch'}
-              />
+              {isClient && (
+                <Input
+                  placeholder="Enter base commit hash"
+                  value={baseCommit}
+                  onChange={(e) => setBaseCommit(e.target.value)}
+                  className="h-12"
+                  disabled={activeComparison === 'branch'}
+                />
+              )}
             </div>
 
             <div className="space-y-4">
@@ -711,13 +743,15 @@ export default function ImageBuilderPage() {
                 <GitCommit className="h-5 w-5 text-muted-foreground" />
                 <h3 className="text-lg font-medium">Current Commit</h3>
               </div>
-              <Input
-                placeholder="Enter current commit hash"
-                value={currentCommit}
-                onChange={(e) => setCurrentCommit(e.target.value)}
-                className="h-12"
-                disabled={activeComparison === 'branch'}
-              />
+              {isClient && (
+                <Input
+                  placeholder="Enter current commit hash"
+                  value={currentCommit}
+                  onChange={(e) => setCurrentCommit(e.target.value)}
+                  className="h-12"
+                  disabled={activeComparison === 'branch'}
+                />
+              )}
             </div>
           </div>
 
