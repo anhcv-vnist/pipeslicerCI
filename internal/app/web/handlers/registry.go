@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/vanhcao3/pipeslicerCI/internal/ci/services/config"
 	"github.com/vanhcao3/pipeslicerCI/internal/ci/services/registry"
 )
 
@@ -14,7 +15,7 @@ func SetupRegistry(app *fiber.App) {
 	registryGroup := app.Group("/registry")
 
 	// Initialize registry manager
-	manager, err := registry.NewRegistryManager("/tmp/pipeslicerci-registry.db")
+	manager, err := registry.NewRegistryManager(config.PostgresConnectionString)
 	if err != nil {
 		log.Fatalf("Failed to initialize registry manager: %v", err)
 	}
@@ -239,10 +240,10 @@ func createTag(manager *registry.RegistryManager) fiber.Handler {
 		}
 
 		return c.JSON(fiber.Map{
-			"message": "Tag created successfully",
-			"service": service,
+			"message":   "Tag created successfully",
+			"service":   service,
 			"sourceTag": req.SourceTag,
-			"newTag": req.NewTag,
+			"newTag":    req.NewTag,
 		})
 	}
 }

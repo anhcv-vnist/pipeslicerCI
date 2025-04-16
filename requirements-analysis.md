@@ -1,11 +1,4 @@
-# TÀI LIỆU PHÂN TÍCH YÊU CẦU
-## CÔNG CỤ PIPESLICERCI CHO DỰ ÁN QLCV MICROSERVICES
-
-**Mã tài liệu:** PRD-PIPESLICERCI-001  
-**Phiên bản:** 1.0  
-**Ngày tạo:** 03/04/2025  
-**Người tạo:** Cline  
-**Trạng thái:** Dự thảo
+# CÔNG CỤ PIPESLICERCI CHO DỰ ÁN QLCV MICROSERVICES
 
 ---
 
@@ -102,19 +95,19 @@ Dịch vụ tự động xây dựng Docker image từ mã nguồn và lưu tr�
 
 #### 3.1.4. Use Case Scenario
 **Tên use case**: Build và Push Docker Image  
-**Tác nhân chính**: Developer, CI System  
+**Tác nhân chính**: Developer, Hệ thống  
 **Điều kiện tiên quyết**: Repository đã được cấu hình với Dockerfile  
 **Luồng chính**:
 1. Developer push code lên repository
-2. CI System phát hiện thay đổi và trigger build
-3. Image Builder Service clone repository
-4. Image Builder Service xác định các service bị ảnh hưởng bởi thay đổi
-5. Image Builder Service build Docker image cho từng service
-6. Image Builder Service tag và push image lên registry nội bộ
-7. Image Builder Service thông báo kết quả build
+2. Hệ thống phát hiện thay đổi và trigger build
+3. Hệ thống clone repository
+4. Hệ thống xác định các service bị ảnh hưởng bởi thay đổi
+5. Hệ thống build Docker image cho từng service
+6. Hệ thống tag và push image lên registry nội bộ
+7. Hệ thống thông báo kết quả build
 
 **Luồng thay thế**:
-- Nếu build thất bại, Image Builder Service gửi thông báo lỗi và không push image lên registry
+- Nếu build thất bại, Hệ thống gửi thông báo lỗi và không push image lên registry
 
 #### 3.1.5. Mức độ tự động hóa
 Hoàn toàn tự động
@@ -135,17 +128,18 @@ Quản lý phiên bản image, lưu trữ metadata và cung cấp API để truy
 
 #### 3.2.4. Use Case Scenario
 **Tên use case**: Quản lý Phiên bản Docker Image  
-**Tác nhân chính**: Developer, Ops, Deployment System  
+**Tác nhân chính**: Developer, CI System
 **Điều kiện tiên quyết**: Image đã được build và push lên registry  
 **Luồng chính**:
-1. Image Builder Service push image lên registry
-2. Registry Manager lưu trữ metadata (commit hash, branch, build time, etc.)
-3. Deployment System truy vấn Registry Manager để lấy image phù hợp
-4. Registry Manager cung cấp API để rollback về phiên bản trước
-5. Ops có thể xem lịch sử các phiên bản image
+1. Developer kích hoạt sự kiện package mã nguồn
+2. Hệ thống push image lên registry
+3. Hệ thống lưu trữ metadata (commit hash, branch, build time, etc.)
+4. Hệ thống truy vấn Registry để lấy image phù hợp
+5. Hệ thống cung cấp API để rollback về phiên bản trước
+6. Ops có thể xem lịch sử các phiên bản image
 
 **Luồng thay thế**:
-- Nếu không tìm thấy image phù hợp, Registry Manager trả về thông báo lỗi
+- Nếu không tìm thấy image phù hợp, Hệ thống trả về thông báo lỗi
 
 #### 3.2.5. Mức độ tự động hóa
 Hoàn toàn tự động
@@ -168,19 +162,19 @@ Dịch vụ tự động chạy các bộ test và báo cáo kết quả.
 
 #### 3.3.4. Use Case Scenario
 **Tên use case**: Chạy Automated Tests  
-**Tác nhân chính**: Developer, CI System  
+**Tác nhân chính**: Developer, Hệ thống  
 **Điều kiện tiên quyết**: Repository đã được cấu hình với test scripts  
 **Luồng chính**:
 1. Developer push code lên repository
-2. CI System phát hiện thay đổi và trigger test
-3. Test Runner Service clone repository
-4. Test Runner Service xác định các service bị ảnh hưởng bởi thay đổi
-5. Test Runner Service chạy unit tests, integration tests, và end-to-end tests
-6. Test Runner Service tạo báo cáo kết quả test
-7. Test Runner Service thông báo kết quả test
+2. Hệ thống phát hiện thay đổi và trigger test
+3. Hệ thống clone repository
+4. Hệ thống xác định các service bị ảnh hưởng bởi thay đổi
+5. Hệ thống chạy unit tests, integration tests, và end-to-end tests
+6. Hệ thống tạo báo cáo kết quả test
+7. Hệ thống thông báo kết quả test
 
 **Luồng thay thế**:
-- Nếu tests thất bại, Test Runner Service gửi thông báo lỗi và dừng quy trình CI/CD
+- Nếu tests thất bại, Hệ thống gửi thông báo lỗi và dừng quy trình CI/CD
 
 #### 3.3.5. Mức độ tự động hóa
 Hoàn toàn tự động
@@ -202,17 +196,17 @@ Quản lý cấu hình tập trung cho tất cả các service.
 
 #### 3.4.4. Use Case Scenario
 **Tên use case**: Quản lý Cấu hình Tập trung  
-**Tác nhân chính**: Developer, Ops, Services  
-**Điều kiện tiên quyết**: Configuration Manager đã được cài đặt và cấu hình  
+**Tác nhân chính**: Developer, CI System
+**Điều kiện tiên quyết**: Hệ thống đã được cài đặt và cấu hình  
 **Luồng chính**:
-1. Ops định nghĩa cấu hình cho mỗi service trong mỗi môi trường
-2. Configuration Manager lưu trữ cấu hình trong database
-3. Services truy vấn Configuration Manager để lấy cấu hình khi khởi động
+1. Developer định nghĩa cấu hình cho mỗi service trong mỗi môi trường
+2. Hệ thống lưu trữ cấu hình trong database
+3. Services truy vấn Hệ thống để lấy cấu hình khi khởi động
 4. Developer có thể xem và cập nhật cấu hình thông qua UI
-5. Configuration Manager theo dõi lịch sử thay đổi cấu hình
+5. Hệ thống theo dõi lịch sử thay đổi cấu hình
 
 **Luồng thay thế**:
-- Nếu service không thể kết nối với Configuration Manager, service sử dụng cấu hình mặc định
+- Nếu service không thể kết nối với CI System, service sử dụng cấu hình mặc định
 
 #### 3.4.5. Mức độ tự động hóa
 Một phần tự động (cần sự tham gia của Ops để định nghĩa cấu hình)
@@ -234,17 +228,17 @@ Quản lý bí mật (secrets) an toàn cho tất cả các service.
 
 #### 3.5.4. Use Case Scenario
 **Tên use case**: Quản lý Bí mật An toàn  
-**Tác nhân chính**: Developer, Ops, Services  
+**Tác nhân chính**: Developer, Hệ thống  
 **Điều kiện tiên quyết**: Secrets Manager đã được cài đặt và cấu hình  
 **Luồng chính**:
-1. Ops định nghĩa bí mật cho mỗi service
-2. Secrets Manager mã hóa và lưu trữ bí mật
-3. Services xác thực với Secrets Manager và lấy bí mật khi cần
-4. Secrets Manager ghi log mỗi lần truy cập bí mật
+1. Developer định nghĩa bí mật cho mỗi service
+2. Hệ thống mã hóa và lưu trữ bí mật
+3. Developer xác thực với Hệ thống   và lấy bí mật khi cần
+4. Hệ thống   ghi log mỗi lần truy cập bí mật
 5. Ops có thể xoay vòng (rotate) bí mật định kỳ
 
 **Luồng thay thế**:
-- Nếu service không có quyền truy cập bí mật, Secrets Manager trả về lỗi
+- Nếu service không có quyền truy cập bí mật, Hệ thống   trả về lỗi
 
 #### 3.5.5. Mức độ tự động hóa
 Một phần tự động (cần sự tham gia của Ops để định nghĩa bí mật)
@@ -266,18 +260,18 @@ Quản lý quy trình triển khai các service, đảm bảo thứ tự triển
 
 #### 3.6.4. Use Case Scenario
 **Tên use case**: Triển khai Microservices Theo Thứ tự Phụ thuộc  
-**Tác nhân chính**: Ops, CI System  
+**Tác nhân chính**: Hệ thống  
 **Điều kiện tiên quyết**: Services đã được build và push lên registry  
 **Luồng chính**:
-1. CI System trigger deployment sau khi build và test thành công
-2. Deployment Orchestrator phân tích dependency graph
-3. Deployment Orchestrator xác định thứ tự triển khai tối ưu
-4. Deployment Orchestrator triển khai từng service theo thứ tự
-5. Deployment Orchestrator kiểm tra health check sau mỗi lần triển khai
-6. Deployment Orchestrator thông báo kết quả triển khai
+1. Hệ thống trigger deployment sau khi build và test thành công
+2. Hệ thống phân tích dependency graph
+3. Hệ thống xác định thứ tự triển khai tối ưu
+4. Hệ thống triển khai từng service theo thứ tự
+5. Hệ thống kiểm tra health check sau mỗi lần triển khai
+6. Hệ thống thông báo kết quả triển khai
 
 **Luồng thay thế**:
-- Nếu một service triển khai thất bại, Deployment Orchestrator có thể rollback hoặc dừng quy trình
+- Nếu một service triển khai thất bại, Hệ thống có thể rollback hoặc dừng quy trình
 
 #### 3.6.5. Mức độ tự động hóa
 Hoàn toàn tự động cho môi trường dev và staging, một phần tự động cho production (cần approval)
@@ -303,47 +297,15 @@ Phân tích và quản lý sự phụ thuộc giữa các service.
 **Điều kiện tiên quyết**: Services đã được định nghĩa với API contracts  
 **Luồng chính**:
 1. Developer định nghĩa API contracts cho mỗi service
-2. Dependency Analyzer quét mã nguồn và API contracts
-3. Dependency Analyzer xây dựng dependency graph
-4. Deployment Orchestrator sử dụng dependency graph để xác định thứ tự triển khai
+2. Hệ thống quét mã nguồn và API contracts
+3. Hệ thống xây dựng dependency graph
+4. Hệ thống sử dụng dependency graph để xác định thứ tự triển khai
 5. Developer có thể xem dependency graph để hiểu tác động của thay đổi
 
 **Luồng thay thế**:
-- Nếu phát hiện circular dependency, Dependency Analyzer cảnh báo và đề xuất giải pháp
+- Nếu phát hiện circular dependency, Hệ thống cảnh báo và đề xuất giải pháp
 
 #### 3.7.5. Mức độ tự động hóa
-Hoàn toàn tự động
-
-### 3.8. Monitoring and Alerting System
-
-#### 3.8.1. Mô tả chức năng
-Giám sát sức khỏe và hiệu suất của các service, gửi cảnh báo khi phát hiện vấn đề.
-
-#### 3.8.2. Đầu vào
-- Service metrics
-- Logs
-- Health check status
-
-#### 3.8.3. Đầu ra
-- Dashboards
-- Alerts
-- Performance reports
-
-#### 3.8.4. Use Case Scenario
-**Tên use case**: Giám sát và Cảnh báo Hệ thống  
-**Tác nhân chính**: Ops, Services  
-**Điều kiện tiên quyết**: Services đã được cấu hình để export metrics  
-**Luồng chính**:
-1. Services export metrics và logs
-2. Monitoring System thu thập và lưu trữ metrics và logs
-3. Monitoring System phân tích metrics và logs để phát hiện vấn đề
-4. Monitoring System gửi cảnh báo khi phát hiện vấn đề
-5. Ops xem dashboards để theo dõi sức khỏe và hiệu suất của hệ thống
-
-**Luồng thay thế**:
-- Nếu một service không export metrics, Monitoring System gửi cảnh báo về việc thiếu dữ liệu
-
-#### 3.8.5. Mức độ tự động hóa
 Hoàn toàn tự động
 
 ---
@@ -426,65 +388,25 @@ Hệ thống sẽ được triển khai trên Kubernetes với các thành phầ
 ## 6. KẾ HOẠCH TRIỂN KHAI
 
 ### 6.1. Lộ trình phát triển
-1. **Phase 1 (2 tuần)**: Core Services
+1. **Core Services**: 
    - API Gateway
    - Authentication Service
    - Web UI (basic)
 
-2. **Phase 2 (3 tuần)**: CI/CD Services
+2. **CI/CD Services**: 
    - Image Builder Service
    - Test Runner Service
    - Registry Manager
 
-3. **Phase 3 (3 tuần)**: Management Services
+3. **Management Services**: 
    - Configuration Manager
    - Secrets Manager
    - Dependency Analyzer
 
-4. **Phase 4 (2 tuần)**: Deployment và Integration
+4. **Deployment và Integration**: 
    - Deployment Orchestrator
    - Integration với các service khác
    - End-to-end testing
 
-5. **Phase 5 (2 tuần)**: Monitoring và Optimization
-   - Monitoring and Alerting System
-   - Performance optimization
-   - Documentation
 
-### 6.2. Rủi ro và giảm thiểu
-1. **Rủi ro**: Độ phức tạp của hệ thống microservices
-   **Giảm thiểu**: Phát triển từng phase, testing kỹ lưỡng sau mỗi phase
 
-2. **Rủi ro**: Khó khăn trong việc migration từ hệ thống cũ
-   **Giảm thiểu**: Cung cấp công cụ migration và hỗ trợ song song cả hai hệ thống trong thời gian chuyển đổi
-
-3. **Rủi ro**: Resistance to change từ team
-   **Giảm thiểu**: Training và documentation đầy đủ, demo các lợi ích của hệ thống mới
-
----
-
-## 7. PHỤ LỤC
-
-### 7.1. Glossary
-- **Pipeline**: Một chuỗi các bước (steps) được thực thi tuần tự để build, test và deploy một ứng dụng
-- **Registry**: Kho lưu trữ Docker images
-- **Microservice**: Một service nhỏ, độc lập, thực hiện một chức năng cụ thể trong hệ thống
-- **Dependency Graph**: Biểu đồ thể hiện sự phụ thuộc giữa các service
-- **Health Check**: Kiểm tra trạng thái hoạt động của một service
-
-### 7.2. References
-- Docker Documentation: https://docs.docker.com/
-- Kubernetes Documentation: https://kubernetes.io/docs/
-- Go Documentation: https://golang.org/doc/
-- Microservices Architecture: https://microservices.io/
-
----
-
-**Phê duyệt bởi**:
-
-| Vai trò | Tên | Ngày phê duyệt |
-|---------|-----|----------------|
-| Product Owner | | |
-| Technical Lead | | |
-| DevOps Lead | | |
-| Security Officer | | |

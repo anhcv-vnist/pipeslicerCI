@@ -2,55 +2,42 @@ package registry
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // ImageMetadata contains metadata about a Docker image
 type ImageMetadata struct {
-	ID        int64
-	Service   string
-	Tag       string
-	Commit    string
-	Branch    string
-	BuildTime time.Time
-	Status    string // "success", "failed", etc.
-	Registry  string
-	ImageName string
+	ID        int64     `gorm:"primaryKey;autoIncrement"`
+	Service   string    `gorm:"not null"`
+	Tag       string    `gorm:"not null"`
+	Commit    string    `gorm:"not null"`
+	Branch    string    `gorm:"not null"`
+	BuildTime time.Time `gorm:"not null"`
+	Status    string    `gorm:"not null"` // "success", "failed", etc.
+	Registry  string    `gorm:"not null"`
+	ImageName string    `gorm:"not null"`
 }
 
 // RegistryManager manages Docker image metadata
 type RegistryManager struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
 // NewRegistryManager creates a new RegistryManager instance
 func NewRegistryManager(dbPath string) (*RegistryManager, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := gorm.Open(postgres.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Create table if not exists
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS images (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			service TEXT NOT NULL,
-			tag TEXT NOT NULL,
-			"commit" TEXT NOT NULL,
-			branch TEXT NOT NULL,
-			build_time TIMESTAMP NOT NULL,
-			status TEXT NOT NULL,
-			registry TEXT NOT NULL,
-			image_name TEXT NOT NULL,
-			UNIQUE(service, tag)
-		)
-	`)
+	// Auto migrate the schema
+	err = db.AutoMigrate(&ImageMetadata{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	return &RegistryManager{db: db}, nil
@@ -58,188 +45,126 @@ func NewRegistryManager(dbPath string) (*RegistryManager, error) {
 
 // Close closes the database connection
 func (m *RegistryManager) Close() error {
-	return m.db.Close()
+	sqlDB, err := m.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }
 
-// RecordImage records metadata about a built Docker image
+// RecordImage records metadata for a Docker image
 func (m *RegistryManager) RecordImage(ctx context.Context, metadata ImageMetadata) error {
-	_, err := m.db.ExecContext(ctx, `
-		INSERT OR REPLACE INTO images (service, tag, "commit", branch, build_time, status, registry, image_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, metadata.Service, metadata.Tag, metadata.Commit, metadata.Branch, metadata.BuildTime, metadata.Status, metadata.Registry, metadata.ImageName)
-	
-	if err != nil {
-		return fmt.Errorf("failed to record image: %w", err)
-	}
-	
-	return nil
+	result := m.db.WithContext(ctx).Create(&metadata)
+	return result.Error
 }
 
-// GetLatestImage gets the latest successful image for a service and branch
+// GetLatestImage gets the latest image for a service and branch
 func (m *RegistryManager) GetLatestImage(ctx context.Context, service, branch string) (*ImageMetadata, error) {
-	row := m.db.QueryRowContext(ctx, `
-		SELECT id, service, tag, "commit", branch, build_time, status, registry, image_name
-		FROM images
-		WHERE service = ? AND branch = ? AND status = 'success'
-		ORDER BY build_time DESC
-		LIMIT 1
-	`, service, branch)
+	var image ImageMetadata
+	result := m.db.WithContext(ctx).
+		Where("service = ? AND branch = ?", service, branch).
+		Order("build_time DESC").
+		First(&image)
 
-	var img ImageMetadata
-	err := row.Scan(&img.ID, &img.Service, &img.Tag, &img.Commit, &img.Branch, &img.BuildTime, &img.Status, &img.Registry, &img.ImageName)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("no image found for service %s on branch %s", service, branch)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("no image found for service %s and branch %s", service, branch)
 		}
-		return nil, fmt.Errorf("failed to get latest image: %w", err)
+		return nil, fmt.Errorf("failed to get latest image: %w", result.Error)
 	}
 
-	return &img, nil
+	return &image, nil
 }
 
-// GetImageByTag gets an image by service and tag
+// GetImageByTag gets an image by its tag
 func (m *RegistryManager) GetImageByTag(ctx context.Context, service, tag string) (*ImageMetadata, error) {
-	row := m.db.QueryRowContext(ctx, `
-		SELECT id, service, tag, "commit", branch, build_time, status, registry, image_name
-		FROM images
-		WHERE service = ? AND tag = ?
-		LIMIT 1
-	`, service, tag)
+	var image ImageMetadata
+	result := m.db.WithContext(ctx).
+		Where("service = ? AND tag = ?", service, tag).
+		First(&image)
 
-	var img ImageMetadata
-	err := row.Scan(&img.ID, &img.Service, &img.Tag, &img.Commit, &img.Branch, &img.BuildTime, &img.Status, &img.Registry, &img.ImageName)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("no image found for service %s with tag %s", service, tag)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("no image found for service %s and tag %s", service, tag)
 		}
-		return nil, fmt.Errorf("failed to get image by tag: %w", err)
+		return nil, fmt.Errorf("failed to get image by tag: %w", result.Error)
 	}
 
-	return &img, nil
+	return &image, nil
 }
 
-// GetImageByCommit gets an image by service and commit
+// GetImageByCommit gets an image by its commit hash
 func (m *RegistryManager) GetImageByCommit(ctx context.Context, service, commit string) (*ImageMetadata, error) {
-	row := m.db.QueryRowContext(ctx, `
-		SELECT id, service, tag, "commit", branch, build_time, status, registry, image_name
-		FROM images
-		WHERE service = ? AND "commit" = ? AND status = 'success'
-		ORDER BY build_time DESC
-		LIMIT 1
-	`, service, commit)
+	var image ImageMetadata
+	result := m.db.WithContext(ctx).
+		Where("service = ? AND commit = ?", service, commit).
+		First(&image)
 
-	var img ImageMetadata
-	err := row.Scan(&img.ID, &img.Service, &img.Tag, &img.Commit, &img.Branch, &img.BuildTime, &img.Status, &img.Registry, &img.ImageName)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("no image found for service %s with commit %s", service, commit)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("no image found for service %s and commit %s", service, commit)
 		}
-		return nil, fmt.Errorf("failed to get image by commit: %w", err)
+		return nil, fmt.Errorf("failed to get image by commit: %w", result.Error)
 	}
 
-	return &img, nil
+	return &image, nil
 }
 
-// GetImageHistory gets the build history for a service
+// GetImageHistory gets the image history for a service
 func (m *RegistryManager) GetImageHistory(ctx context.Context, service string, limit int) ([]ImageMetadata, error) {
-	if limit <= 0 {
-		limit = 10 // Default limit
-	}
-
-	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, service, tag, "commit", branch, build_time, status, registry, image_name
-		FROM images
-		WHERE service = ?
-		ORDER BY build_time DESC
-		LIMIT ?
-	`, service, limit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image history: %w", err)
-	}
-	defer rows.Close()
-
 	var images []ImageMetadata
-	for rows.Next() {
-		var img ImageMetadata
-		err := rows.Scan(&img.ID, &img.Service, &img.Tag, &img.Commit, &img.Branch, &img.BuildTime, &img.Status, &img.Registry, &img.ImageName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan image row: %w", err)
-		}
-		images = append(images, img)
-	}
+	result := m.db.WithContext(ctx).
+		Where("service = ?", service).
+		Order("build_time DESC").
+		Limit(limit).
+		Find(&images)
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating image rows: %w", err)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get image history: %w", result.Error)
 	}
 
 	return images, nil
 }
 
-// DeleteImage deletes an image by ID
+// DeleteImage deletes an image by its ID
 func (m *RegistryManager) DeleteImage(ctx context.Context, id int64) error {
-	_, err := m.db.ExecContext(ctx, `
-		DELETE FROM images
-		WHERE id = ?
-	`, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete image: %w", err)
-	}
-	return nil
+	result := m.db.WithContext(ctx).Delete(&ImageMetadata{}, id)
+	return result.Error
 }
 
-// TagImage adds a new tag to an existing image
+// TagImage tags an image with a new tag
 func (m *RegistryManager) TagImage(ctx context.Context, service, sourceTag, newTag string) error {
-	// Get the source image
-	sourceImage, err := m.GetImageByTag(ctx, service, sourceTag)
-	if err != nil {
-		return fmt.Errorf("failed to get source image: %w", err)
+	var sourceImage ImageMetadata
+	result := m.db.WithContext(ctx).
+		Where("service = ? AND tag = ?", service, sourceTag).
+		First(&sourceImage)
+
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return fmt.Errorf("no image found for service %s and tag %s", service, sourceTag)
+		}
+		return fmt.Errorf("failed to get source image: %w", result.Error)
 	}
 
-	// Create a new metadata entry with the new tag
-	newMetadata := ImageMetadata{
-		Service:   sourceImage.Service,
-		Tag:       newTag,
-		Commit:    sourceImage.Commit,
-		Branch:    sourceImage.Branch,
-		BuildTime: time.Now(), // Use current time for the tagging operation
-		Status:    sourceImage.Status,
-		Registry:  sourceImage.Registry,
-		ImageName: sourceImage.ImageName,
-	}
+	newImage := sourceImage
+	newImage.ID = 0
+	newImage.Tag = newTag
+	newImage.BuildTime = time.Now()
 
-	// Record the new tag
-	err = m.RecordImage(ctx, newMetadata)
-	if err != nil {
-		return fmt.Errorf("failed to record new tag: %w", err)
-	}
-
-	return nil
+	result = m.db.WithContext(ctx).Create(&newImage)
+	return result.Error
 }
 
-// GetServiceList gets a list of all services that have images
+// GetServiceList gets a list of all services
 func (m *RegistryManager) GetServiceList(ctx context.Context) ([]string, error) {
-	rows, err := m.db.QueryContext(ctx, `
-		SELECT DISTINCT service
-		FROM images
-		ORDER BY service
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get service list: %w", err)
-	}
-	defer rows.Close()
-
 	var services []string
-	for rows.Next() {
-		var service string
-		err := rows.Scan(&service)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan service row: %w", err)
-		}
-		services = append(services, service)
-	}
+	result := m.db.WithContext(ctx).
+		Model(&ImageMetadata{}).
+		Distinct().
+		Pluck("service", &services)
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating service rows: %w", err)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get service list: %w", result.Error)
 	}
 
 	return services, nil
@@ -247,29 +172,15 @@ func (m *RegistryManager) GetServiceList(ctx context.Context) ([]string, error) 
 
 // GetTagsForService gets all tags for a service
 func (m *RegistryManager) GetTagsForService(ctx context.Context, service string) ([]string, error) {
-	rows, err := m.db.QueryContext(ctx, `
-		SELECT DISTINCT tag
-		FROM images
-		WHERE service = ?
-		ORDER BY build_time DESC
-	`, service)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tags for service: %w", err)
-	}
-	defer rows.Close()
-
 	var tags []string
-	for rows.Next() {
-		var tag string
-		err := rows.Scan(&tag)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan tag row: %w", err)
-		}
-		tags = append(tags, tag)
-	}
+	result := m.db.WithContext(ctx).
+		Model(&ImageMetadata{}).
+		Where("service = ?", service).
+		Distinct().
+		Pluck("tag", &tags)
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating tag rows: %w", err)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get tags for service: %w", result.Error)
 	}
 
 	return tags, nil

@@ -101,6 +101,33 @@ func NewWorkspaceFromDir(dir string) (*workspaceImpl, error) {
 	}, nil
 }
 
+// NewWorkspaceFromPath creates a new workspace from a local path
+func NewWorkspaceFromPath(path string) (*workspaceImpl, error) {
+	// Check if the path exists
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("path does not exist: %w", err)
+	}
+
+	// Open the repository
+	repo, err := git.PlainOpen(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	// Get the current branch
+	ref, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository head: %w", err)
+	}
+
+	return &workspaceImpl{
+		dir:    path,
+		branch: ref.Name().Short(),
+		commit: ref.Hash().String(),
+		env:    []string{},
+	}, nil
+}
+
 type workspaceImpl struct {
 	branch string
 	commit string

@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/vanhcao3/pipeslicerCI/internal/app/web/docs"
-	"github.com/vanhcao3/pipeslicerCI/internal/app/web/handlers"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/vanhcao3/pipeslicerCI/internal/app/web/docs"
+	"github.com/vanhcao3/pipeslicerCI/internal/app/web/handlers"
 )
 
 func main() {
@@ -24,6 +24,7 @@ func main() {
 	handlers.SetupRegistry(app)
 	handlers.SetupConfig(app)
 	handlers.SetupRegistryConnector(app)
+	handlers.SetupRepository(app)
 
 	// Setup Swagger documentation
 	docs.SetupSwagger(app)

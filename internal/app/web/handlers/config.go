@@ -6,28 +6,26 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/vanhcao3/pipeslicerCI/internal/ci/services/config"
+	configservice "github.com/vanhcao3/pipeslicerCI/internal/ci/services/config"
 )
 
-// SetupConfig registers the configuration management endpoints
+// SetupConfig registers the config endpoints
 func SetupConfig(app *fiber.App) {
 	configGroup := app.Group("/config")
 
 	// Initialize config manager
-	manager, err := config.NewConfigManager("/tmp/pipeslicerci-config.db")
+	manager, err := configservice.NewConfigManager(configservice.PostgresConnectionString)
 	if err != nil {
 		log.Fatalf("Failed to initialize config manager: %v", err)
 	}
 
 	// Register routes
-	configGroup.Get("/environments", getEnvironments(manager))
 	configGroup.Get("/services", getConfigServices(manager))
-	configGroup.Get("/services/:service/environments/:environment", getServiceConfig(manager))
-	configGroup.Get("/services/:service/environments/:environment/secrets", getServiceSecrets(manager))
-	configGroup.Get("/services/:service/environments/:environment/values/:key", getConfigValue(manager))
+	configGroup.Get("/services/:service/environments", getEnvironments(manager))
+	configGroup.Get("/services/:service/environments/:environment/values", getValues(manager))
+	configGroup.Post("/services/:service/environments/:environment/values", setValue(manager))
+	configGroup.Delete("/services/:service/environments/:environment/values/:key", deleteValue(manager))
 	configGroup.Get("/services/:service/environments/:environment/env", generateEnvFile(manager))
-	configGroup.Post("/services/:service/environments/:environment/values", setConfigValue(manager))
-	configGroup.Delete("/services/:service/environments/:environment/values/:key", deleteConfigValue(manager))
 	configGroup.Post("/import", importConfig(manager))
 	configGroup.Get("/export", exportConfig(manager))
 }
@@ -45,7 +43,7 @@ type ConfigValueResponse struct {
 }
 
 // getEnvironments returns a handler for getting all environments
-func getEnvironments(manager *config.ConfigManager) fiber.Handler {
+func getEnvironments(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		environments, err := manager.GetEnvironments(c.Context())
 		if err != nil {
@@ -61,7 +59,7 @@ func getEnvironments(manager *config.ConfigManager) fiber.Handler {
 }
 
 // getConfigServices returns a handler for getting all services with configuration
-func getConfigServices(manager *config.ConfigManager) fiber.Handler {
+func getConfigServices(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		services, err := manager.GetServices(c.Context())
 		if err != nil {
@@ -76,8 +74,8 @@ func getConfigServices(manager *config.ConfigManager) fiber.Handler {
 	}
 }
 
-// getServiceConfig returns a handler for getting all configuration values for a service and environment
-func getServiceConfig(manager *config.ConfigManager) fiber.Handler {
+// getValues returns a handler for getting all configuration values for a service and environment
+func getValues(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		service := c.Params("service")
 		environment := c.Params("environment")
@@ -102,86 +100,6 @@ func getServiceConfig(manager *config.ConfigManager) fiber.Handler {
 	}
 }
 
-// getServiceSecrets returns a handler for getting all secret values for a service and environment
-func getServiceSecrets(manager *config.ConfigManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		environment := c.Params("environment")
-		if service == "" || environment == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service and environment parameters are required",
-			})
-		}
-
-		// Check if the user has permission to view secrets
-		// This is a simplified check - in a real system, you'd have proper authentication
-		authHeader := c.Get("Authorization")
-		if authHeader == "" {
-			return c.Status(401).JSON(fiber.Map{
-				"error": "Authorization required to view secrets",
-			})
-		}
-
-		secrets, err := manager.GetServiceSecrets(c.Context(), service, environment)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to get service secrets: " + err.Error(),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"service":     service,
-			"environment": environment,
-			"secrets":     secrets,
-		})
-	}
-}
-
-// getConfigValue returns a handler for getting a specific configuration value
-func getConfigValue(manager *config.ConfigManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		environment := c.Params("environment")
-		key := c.Params("key")
-		if service == "" || environment == "" || key == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service, environment, and key parameters are required",
-			})
-		}
-
-		value, err := manager.GetValue(c.Context(), service, environment, key)
-		if err != nil {
-			return c.Status(404).JSON(fiber.Map{
-				"error": err.Error(),
-			})
-		}
-
-		// If the value is a secret, check authorization
-		if value.IsSecret {
-			authHeader := c.Get("Authorization")
-			if authHeader == "" {
-				return c.Status(401).JSON(fiber.Map{
-					"error": "Authorization required to view secret values",
-				})
-			}
-		}
-
-		// Convert to response format
-		response := ConfigValueResponse{
-			ID:          value.ID,
-			Service:     value.Service,
-			Environment: value.Environment,
-			Key:         value.Key,
-			Value:       value.Value,
-			IsSecret:    value.IsSecret,
-			CreatedAt:   value.CreatedAt,
-			UpdatedAt:   value.UpdatedAt,
-		}
-
-		return c.JSON(response)
-	}
-}
-
 // SetConfigValueRequest represents the request body for setting a configuration value
 type SetConfigValueRequest struct {
 	Key      string `json:"key" form:"key"`
@@ -189,8 +107,8 @@ type SetConfigValueRequest struct {
 	IsSecret bool   `json:"isSecret" form:"isSecret"`
 }
 
-// setConfigValue returns a handler for setting a configuration value
-func setConfigValue(manager *config.ConfigManager) fiber.Handler {
+// setValue returns a handler for setting a configuration value
+func setValue(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		service := c.Params("service")
 		environment := c.Params("environment")
@@ -240,8 +158,8 @@ func setConfigValue(manager *config.ConfigManager) fiber.Handler {
 	}
 }
 
-// deleteConfigValue returns a handler for deleting a configuration value
-func deleteConfigValue(manager *config.ConfigManager) fiber.Handler {
+// deleteValue returns a handler for deleting a configuration value
+func deleteValue(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		service := c.Params("service")
 		environment := c.Params("environment")
@@ -281,7 +199,7 @@ func deleteConfigValue(manager *config.ConfigManager) fiber.Handler {
 }
 
 // importConfig returns a handler for importing configuration values
-func importConfig(manager *config.ConfigManager) fiber.Handler {
+func importConfig(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Check authorization
 		authHeader := c.Get("Authorization")
@@ -337,7 +255,7 @@ func importConfig(manager *config.ConfigManager) fiber.Handler {
 }
 
 // exportConfig returns a handler for exporting configuration values
-func exportConfig(manager *config.ConfigManager) fiber.Handler {
+func exportConfig(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Check authorization for exporting secrets
 		includeSecrets := c.Query("includeSecrets") == "true"
@@ -372,7 +290,7 @@ func exportConfig(manager *config.ConfigManager) fiber.Handler {
 }
 
 // generateEnvFile returns a handler for generating a .env file
-func generateEnvFile(manager *config.ConfigManager) fiber.Handler {
+func generateEnvFile(manager *configservice.ConfigManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		service := c.Params("service")
 		environment := c.Params("environment")
