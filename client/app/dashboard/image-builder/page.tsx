@@ -12,8 +12,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
-import { GitBranch, ArrowRight, ChevronDown, Globe, Laptop, AlertCircle, Loader2, GitCompare, GitCommit, X, Package } from 'lucide-react';
+import { GitBranch, ArrowRight, ChevronDown, Globe, Laptop, AlertCircle, Loader2, GitCompare, GitCommit, X, Package, CheckSquare, Square } from 'lucide-react';
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ChangedService {
   name: string;
@@ -196,6 +197,8 @@ export default function ImageBuilderPage() {
   const [buildingServices, setBuildingServices] = useState<{[key: string]: boolean}>({});
   const [buildTag, setBuildTag] = useState<string>('v1.0.0');
   const [registry, setRegistry] = useState<string>('localhost:5000');
+  const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [isBuilding, setIsBuilding] = useState(false);
 
   // Load saved state after component mounts
   useEffect(() => {
@@ -528,16 +531,38 @@ export default function ImageBuilderPage() {
     return branches.filter(branch => branch.name !== excludeBranch);
   };
 
-  const handleBuildService = async (servicePath: string) => {
-    if (!selectedRepo) return;
+  const handleServiceSelection = (servicePath: string) => {
+    setSelectedServices(prev => {
+      if (prev.includes(servicePath)) {
+        return prev.filter(s => s !== servicePath);
+      } else {
+        return [...prev, servicePath];
+      }
+    });
+  };
 
-    setBuildingServices(prev => ({ ...prev, [servicePath]: true }));
+  const handleSelectAllServices = () => {
+    if (changedServices && changedServices.length > 0) {
+      if (selectedServices.length === changedServices.length) {
+        // If all are selected, deselect all
+        setSelectedServices([]);
+      } else {
+        // Otherwise, select all
+        setSelectedServices([...changedServices]);
+      }
+    }
+  };
+
+  const handleBuildSelectedServices = async () => {
+    if (!selectedRepo || selectedServices.length === 0) return;
+
+    setIsBuilding(true);
     
     try {
       const result = await buildImage({
         url: selectedRepo.url,
         branch: currentBranch || currentCommit,
-        servicePaths: [servicePath],
+        servicePaths: selectedServices,
         tag: buildTag,
         registry: registry,
       });
@@ -546,7 +571,7 @@ export default function ImageBuilderPage() {
       if (result && result.success) {
         toast({
           title: 'Build Successful',
-          description: `Successfully built image for ${servicePath}`,
+          description: `Successfully built images for ${selectedServices.length} service${selectedServices.length === 1 ? '' : 's'}`,
           variant: 'default',
         });
       } else {
@@ -558,14 +583,14 @@ export default function ImageBuilderPage() {
         });
       }
     } catch (error) {
-      console.error('Error building image:', error);
+      console.error('Error building images:', error);
       toast({
         title: 'Build Error',
-        description: error instanceof Error ? error.message : 'Failed to build image',
+        description: error instanceof Error ? error.message : 'Failed to build images',
         variant: 'destructive',
       });
     } finally {
-      setBuildingServices(prev => ({ ...prev, [servicePath]: false }));
+      setIsBuilding(false);
     }
   };
 
@@ -860,35 +885,73 @@ export default function ImageBuilderPage() {
           )}
 
           {changedServices && changedServices.length > 0 ? (
-            <div className="grid gap-2">
-              {changedServices.map((service) => (
-                <div
-                  key={service}
-                  className="flex items-center justify-between gap-2 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">{service}</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => handleBuildService(service)}
-                    disabled={buildingServices[service]}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleSelectAllServices}
+                    className="h-8"
                   >
-                    {buildingServices[service] ? (
+                    {selectedServices.length === changedServices.length ? (
                       <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        Building...
+                        <CheckSquare className="h-4 w-4 mr-2" />
+                        Deselect All
                       </>
                     ) : (
                       <>
-                        <Package className="h-4 w-4 mr-2" />
-                        Build
+                        <Square className="h-4 w-4 mr-2" />
+                        Select All
                       </>
                     )}
                   </Button>
+                  <span className="text-sm text-muted-foreground">
+                    {selectedServices.length} of {changedServices.length} selected
+                  </span>
                 </div>
-              ))}
+                <Button
+                  onClick={handleBuildSelectedServices}
+                  disabled={selectedServices.length === 0 || isBuilding}
+                  size="sm"
+                >
+                  {isBuilding ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Building...
+                    </>
+                  ) : (
+                    <>
+                      <Package className="h-4 w-4 mr-2" />
+                      Build Selected ({selectedServices.length})
+                    </>
+                  )}
+                </Button>
+              </div>
+              
+              <div className="grid gap-2">
+                {changedServices.map((service) => (
+                  <div
+                    key={service}
+                    className="flex items-center justify-between gap-2 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        id={`service-${service}`}
+                        checked={selectedServices.includes(service)}
+                        onCheckedChange={() => handleServiceSelection(service)}
+                      />
+                      <label 
+                        htmlFor={`service-${service}`}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <GitBranch className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">{service}</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="flex items-center gap-2 p-4 bg-muted rounded-lg text-muted-foreground">
