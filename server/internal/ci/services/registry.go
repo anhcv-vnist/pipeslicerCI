@@ -859,27 +859,34 @@ func (s *RegistryService) DeleteImage(ctx context.Context, registryID uint, imag
 
 // CopyImage copies a Docker image from one registry to another
 func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) error {
+	log.Printf("Starting image copy operation: %+v", req)
+
 	// Get source registry
 	sourceRegistry, err := s.repo.GetByID(ctx, req.SourceRegistryID)
 	if err != nil {
+		log.Printf("Error getting source registry (ID: %d): %v", req.SourceRegistryID, err)
 		if errors.Is(err, repository.ErrRegistryNotFound) {
 			return fmt.Errorf("source registry not found: %w", err)
 		}
 		return err
 	}
+	log.Printf("Found source registry: %s (URL: %s)", sourceRegistry.Name, sourceRegistry.URL)
 
 	// Get destination registry
 	destRegistry, err := s.repo.GetByID(ctx, req.DestinationRegistryID)
 	if err != nil {
+		log.Printf("Error getting destination registry (ID: %d): %v", req.DestinationRegistryID, err)
 		if errors.Is(err, repository.ErrRegistryNotFound) {
 			return fmt.Errorf("destination registry not found: %w", err)
 		}
 		return err
 	}
+	log.Printf("Found destination registry: %s (URL: %s)", destRegistry.Name, destRegistry.URL)
 
 	// Create a Docker client
 	client, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
+		log.Printf("Error creating Docker client: %v", err)
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
 	defer client.Close()
@@ -891,11 +898,13 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 		ServerAddress: sourceRegistry.URL,
 	}
 
-	// Get source authentication token
+	log.Printf("Attempting to authenticate with source registry: %s", sourceRegistry.URL)
 	sourceAuthResponse, err := client.RegistryLogin(ctx, sourceAuthConfig)
 	if err != nil {
+		log.Printf("Error authenticating with source registry: %v", err)
 		return fmt.Errorf("failed to authenticate with source registry: %w", err)
 	}
+	log.Printf("Successfully authenticated with source registry")
 
 	// Authenticate with destination registry
 	destAuthConfig := types.AuthConfig{
@@ -904,11 +913,13 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 		ServerAddress: destRegistry.URL,
 	}
 
-	// Get destination authentication token
+	log.Printf("Attempting to authenticate with destination registry: %s", destRegistry.URL)
 	destAuthResponse, err := client.RegistryLogin(ctx, destAuthConfig)
 	if err != nil {
+		log.Printf("Error authenticating with destination registry: %v", err)
 		return fmt.Errorf("failed to authenticate with destination registry: %w", err)
 	}
+	log.Printf("Successfully authenticated with destination registry")
 
 	// Create registry clients
 	registryClient := &http.Client{
@@ -922,12 +933,16 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 	for _, sourceProtocol := range sourceProtocols {
 		// Construct the source registry API URL
 		sourceRegistryURL := fmt.Sprintf("%s://%s/v2", sourceProtocol, sourceRegistry.URL)
+		log.Printf("Trying source protocol: %s, URL: %s", sourceProtocol, sourceRegistryURL)
 
 		// Get manifest from source registry
 		sourceManifestURL := fmt.Sprintf("%s/%s/manifests/%s", sourceRegistryURL, req.SourceImage, req.SourceTag)
+		log.Printf("Fetching manifest from: %s", sourceManifestURL)
+
 		httpReq, err := http.NewRequestWithContext(ctx, "GET", sourceManifestURL, nil)
 		if err != nil {
 			lastError = fmt.Errorf("failed to create source request: %w", err)
+			log.Printf("Error creating source request: %v", err)
 			continue
 		}
 
@@ -939,14 +954,47 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 		resp, err := registryClient.Do(httpReq)
 		if err != nil {
 			lastError = fmt.Errorf("failed to get source manifest: %w", err)
+			log.Printf("Error getting source manifest: %v", err)
 			continue
 		}
-		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("Unexpected status code from source registry: %d, body: %s", resp.StatusCode, string(body))
+			resp.Body.Close()
+			lastError = fmt.Errorf("failed to get source manifest: status %d", resp.StatusCode)
+			continue
+		}
 
 		// Read manifest content
 		manifestContent, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			lastError = fmt.Errorf("failed to read manifest: %w", err)
+			log.Printf("Error reading manifest: %v", err)
+			continue
+		}
+		log.Printf("Successfully retrieved manifest from source registry")
+
+		// Parse manifest to get layer digests
+		var manifest struct {
+			SchemaVersion int    `json:"schemaVersion"`
+			MediaType     string `json:"mediaType"`
+			Config        struct {
+				MediaType string `json:"mediaType"`
+				Size      int    `json:"size"`
+				Digest    string `json:"digest"`
+			} `json:"config"`
+			Layers []struct {
+				MediaType string `json:"mediaType"`
+				Size      int    `json:"size"`
+				Digest    string `json:"digest"`
+			} `json:"layers"`
+		}
+
+		if err := json.Unmarshal(manifestContent, &manifest); err != nil {
+			lastError = fmt.Errorf("failed to parse manifest: %w", err)
+			log.Printf("Error parsing manifest: %v", err)
 			continue
 		}
 
@@ -955,12 +1003,123 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 		for _, destProtocol := range destProtocols {
 			// Construct the destination registry API URL
 			destRegistryURL := fmt.Sprintf("%s://%s/v2", destProtocol, destRegistry.URL)
+			log.Printf("Trying destination protocol: %s, URL: %s", destProtocol, destRegistryURL)
 
-			// Put manifest to destination registry
+			// First, copy all blobs (layers and config)
+			blobsToCopy := append([]struct {
+				MediaType string `json:"mediaType"`
+				Size      int    `json:"size"`
+				Digest    string `json:"digest"`
+			}{manifest.Config}, manifest.Layers...)
+			for _, blob := range blobsToCopy {
+				// Check if blob exists in destination
+				checkURL := fmt.Sprintf("%s/%s/blobs/%s", destRegistryURL, req.DestinationImage, blob.Digest)
+				checkReq, err := http.NewRequestWithContext(ctx, "HEAD", checkURL, nil)
+				if err != nil {
+					log.Printf("Error creating blob check request: %v", err)
+					continue
+				}
+				checkReq.Header.Set("Authorization", "Bearer "+destAuthResponse.IdentityToken)
+
+				checkResp, err := registryClient.Do(checkReq)
+				if err != nil {
+					log.Printf("Error checking blob existence: %v", err)
+					continue
+				}
+				checkResp.Body.Close()
+
+				// If blob exists (200 OK), skip copying
+				if checkResp.StatusCode == http.StatusOK {
+					log.Printf("Blob %s already exists in destination registry", blob.Digest)
+					continue
+				}
+
+				// Get blob from source
+				sourceBlobURL := fmt.Sprintf("%s/%s/blobs/%s", sourceRegistryURL, req.SourceImage, blob.Digest)
+				sourceReq, err := http.NewRequestWithContext(ctx, "GET", sourceBlobURL, nil)
+				if err != nil {
+					log.Printf("Error creating source blob request: %v", err)
+					continue
+				}
+				sourceReq.Header.Set("Authorization", "Bearer "+sourceAuthResponse.IdentityToken)
+
+				sourceResp, err := registryClient.Do(sourceReq)
+				if err != nil {
+					log.Printf("Error getting source blob: %v", err)
+					continue
+				}
+
+				if sourceResp.StatusCode != http.StatusOK {
+					body, _ := io.ReadAll(sourceResp.Body)
+					log.Printf("Error getting source blob: status %d, body: %s", sourceResp.StatusCode, string(body))
+					sourceResp.Body.Close()
+					continue
+				}
+
+				// Initiate blob upload to destination
+				initiateURL := fmt.Sprintf("%s/%s/blobs/uploads/", destRegistryURL, req.DestinationImage)
+				initiateReq, err := http.NewRequestWithContext(ctx, "POST", initiateURL, nil)
+				if err != nil {
+					sourceResp.Body.Close()
+					log.Printf("Error creating initiate upload request: %v", err)
+					continue
+				}
+				initiateReq.Header.Set("Authorization", "Bearer "+destAuthResponse.IdentityToken)
+
+				initiateResp, err := registryClient.Do(initiateReq)
+				if err != nil {
+					sourceResp.Body.Close()
+					log.Printf("Error initiating blob upload: %v", err)
+					continue
+				}
+
+				if initiateResp.StatusCode != http.StatusAccepted {
+					body, _ := io.ReadAll(initiateResp.Body)
+					log.Printf("Error initiating blob upload: status %d, body: %s", initiateResp.StatusCode, string(body))
+					initiateResp.Body.Close()
+					sourceResp.Body.Close()
+					continue
+				}
+
+				// Get upload URL from Location header
+				uploadURL := initiateResp.Header.Get("Location")
+				initiateResp.Body.Close()
+
+				// Upload blob to destination
+				uploadReq, err := http.NewRequestWithContext(ctx, "PUT", uploadURL+"&digest="+blob.Digest, sourceResp.Body)
+				if err != nil {
+					sourceResp.Body.Close()
+					log.Printf("Error creating upload request: %v", err)
+					continue
+				}
+				uploadReq.Header.Set("Authorization", "Bearer "+destAuthResponse.IdentityToken)
+				uploadReq.Header.Set("Content-Type", "application/octet-stream")
+
+				uploadResp, err := registryClient.Do(uploadReq)
+				sourceResp.Body.Close()
+				if err != nil {
+					log.Printf("Error uploading blob: %v", err)
+					continue
+				}
+				uploadResp.Body.Close()
+
+				if uploadResp.StatusCode != http.StatusCreated {
+					body, _ := io.ReadAll(uploadResp.Body)
+					log.Printf("Error uploading blob: status %d, body: %s", uploadResp.StatusCode, string(body))
+					continue
+				}
+
+				log.Printf("Successfully copied blob %s", blob.Digest)
+			}
+
+			// Now copy the manifest
 			destManifestURL := fmt.Sprintf("%s/%s/manifests/%s", destRegistryURL, req.DestinationImage, req.DestinationTag)
+			log.Printf("Putting manifest to: %s", destManifestURL)
+
 			httpReq, err = http.NewRequestWithContext(ctx, "PUT", destManifestURL, bytes.NewReader(manifestContent))
 			if err != nil {
 				lastError = fmt.Errorf("failed to create destination request: %w", err)
+				log.Printf("Error creating destination request: %v", err)
 				continue
 			}
 
@@ -972,18 +1131,24 @@ func (s *RegistryService) CopyImage(ctx context.Context, req CopyImageRequest) e
 			resp, err = registryClient.Do(httpReq)
 			if err != nil {
 				lastError = fmt.Errorf("failed to put destination manifest: %w", err)
+				log.Printf("Error putting manifest to destination: %v", err)
 				continue
 			}
-			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 
 			if resp.StatusCode != http.StatusCreated {
+				log.Printf("Unexpected status code from destination registry: %d, body: %s", resp.StatusCode, string(body))
 				lastError = fmt.Errorf("failed to put destination manifest: status %d", resp.StatusCode)
 				continue
 			}
 
+			log.Printf("Successfully copied image from %s:%s to %s:%s", req.SourceImage, req.SourceTag, req.DestinationImage, req.DestinationTag)
 			return nil
 		}
 	}
 
+	log.Printf("Failed to copy image after trying all protocols. Last error: %v", lastError)
 	return lastError
 }

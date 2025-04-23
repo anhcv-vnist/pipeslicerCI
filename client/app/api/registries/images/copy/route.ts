@@ -16,11 +16,20 @@ export async function POST(request: NextRequest) {
         'Pragma': 'no-cache',
         'Expires': '0'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        source_registry_id: body.sourceRegistryId,
+        source_image: body.sourceImage,
+        source_tag: body.sourceTag,
+        destination_registry_id: body.destinationRegistryId,
+        destination_image: body.destinationImage,
+        destination_tag: body.destinationTag
+      })
     });
     
     if (!response.ok) {
       console.error('Error response from API:', response.status, response.statusText);
+      const errorText = await response.text();
+      console.error('Error response body:', errorText);
       return NextResponse.json({ error: 'Failed to copy image' }, { 
         status: response.status,
         headers: {

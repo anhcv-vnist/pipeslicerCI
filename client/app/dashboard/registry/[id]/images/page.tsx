@@ -63,7 +63,8 @@ import {
   deleteImage, 
   retagImage, 
   copyImage,
-  testRegistryConnection
+  testRegistryConnection,
+  listRegistries
 } from "@/lib/api"
 import { Registry, DockerImage, DockerImageDetail, RetagImageRequest, CopyImageRequest } from "@/lib/types"
 import { formatBytes, formatDate } from "@/lib/utils"
@@ -95,9 +96,11 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
     destinationTag: ""
   })
   const [registries, setRegistries] = useState<Registry[]>([])
+  const [copyLoading, setCopyLoading] = useState(false)
 
   useEffect(() => {
     fetchRegistry()
+    fetchRegistries()
   }, [registryId])
 
   const fetchRegistry = async () => {
@@ -129,6 +132,18 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
       router.push('/dashboard/registry')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchRegistries = async () => {
+    try {
+      const data = await listRegistries()
+      // Filter out the current registry from the list
+      const otherRegistries = data.filter(reg => reg.id !== registryId)
+      setRegistries(otherRegistries)
+    } catch (error) {
+      console.error("Failed to fetch registries:", error)
+      toast.error("Failed to fetch registries list")
     }
   }
 
@@ -214,7 +229,7 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
       sourceRegistryId: registryId,
       sourceImage: image.name,
       sourceTag: image.tags?.[0] || '',
-      destinationRegistryId: 0,
+      destinationRegistryId: registries.length > 0 ? registries[0].id : 0,
       destinationImage: image.name,
       destinationTag: image.tags?.[0] || ''
     })
@@ -225,6 +240,7 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
     if (!selectedImage) return
 
     try {
+      setCopyLoading(true)
       await copyImage(copyForm)
       toast.success("Image copied successfully")
       setOpenCopyDialog(false)
@@ -232,6 +248,8 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
     } catch (error) {
       toast.error("Failed to copy image")
       console.error(error)
+    } finally {
+      setCopyLoading(false)
     }
   }
 
@@ -708,11 +726,15 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                   <SelectValue placeholder="Select a registry" />
                 </SelectTrigger>
                 <SelectContent>
-                  {registries.map((registry) => (
-                    <SelectItem key={registry.id} value={registry.id.toString()}>
-                      {registry.name}
-                    </SelectItem>
-                  ))}
+                  {registries.length > 0 ? (
+                    registries.map((registry) => (
+                      <SelectItem key={registry.id} value={registry.id.toString()}>
+                        {registry.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="0" disabled>No other registries available</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -724,6 +746,7 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                 placeholder="e.g. myapp"
                 value={copyForm.destinationImage}
                 onChange={handleInputChange}
+                disabled={copyLoading}
               />
             </div>
             <div className="grid gap-2">
@@ -734,14 +757,27 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                 placeholder="e.g. v1.0.0"
                 value={copyForm.destinationTag}
                 onChange={handleInputChange}
+                disabled={copyLoading}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpenCopyDialog(false)}>
+            <Button variant="outline" onClick={() => setOpenCopyDialog(false)} disabled={copyLoading}>
               Cancel
             </Button>
-            <Button onClick={handleCopyImage}>Copy</Button>
+            <Button 
+              onClick={handleCopyImage}
+              disabled={copyForm.destinationRegistryId === 0 || registries.length === 0 || copyLoading}
+            >
+              {copyLoading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Copying...
+                </>
+              ) : (
+                "Copy"
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
