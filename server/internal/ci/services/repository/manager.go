@@ -29,6 +29,19 @@ type RepositoryMetadata struct {
 	UpdatedAt   time.Time `gorm:"not null"`
 }
 
+// MicroserviceInfo contains information about a microservice in a repository branch
+type MicroserviceInfo struct {
+	ID            int64     `gorm:"primaryKey;autoIncrement"`
+	RepositoryID  int64     `gorm:"not null;index"`
+	Branch        string    `gorm:"not null"`
+	Path          string    `gorm:"not null"`
+	Name          string    `gorm:"not null"`
+	HasDockerfile bool      `gorm:"not null"`
+	LastUpdated   time.Time `gorm:"not null"`
+	CreatedAt     time.Time `gorm:"not null"`
+	UpdatedAt     time.Time `gorm:"not null"`
+}
+
 // CommitInfo represents information about a git commit
 type CommitInfo struct {
 	Hash      string    `json:"hash"`
@@ -51,7 +64,7 @@ func NewRepositoryManager(db *gorm.DB, baseDir string) (*RepositoryManager, erro
 	}
 
 	// Auto migrate the schema
-	err := db.AutoMigrate(&RepositoryMetadata{})
+	err := db.AutoMigrate(&RepositoryMetadata{}, &MicroserviceInfo{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
@@ -634,4 +647,193 @@ func (m *RepositoryManager) SyncRepository(ctx context.Context, id int64) error 
 	}
 
 	return nil
+}
+
+// DetectMicroservices detects microservices in a repository branch and stores them in the database
+func (m *RepositoryManager) DetectMicroservices(ctx context.Context, id int64, branch string) ([]MicroserviceInfo, error) {
+	// Get repository metadata
+	_, err := m.GetRepositoryByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository: %w", err)
+	}
+
+	// Checkout the specified branch
+	err = m.CheckoutBranch(ctx, id, branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to checkout branch: %w", err)
+	}
+
+	// Get repository path
+	repoPath, err := m.GetRepositoryPath(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository path: %w", err)
+	}
+
+	// Create a command to find all directories that might contain microservices
+	// This assumes a structure like micro-services/service-name/...
+	cmd := exec.Command("find", repoPath, "-path", "*/micro-services/*", "-type", "d", "-maxdepth", "2")
+	cmd.Dir = repoPath
+	output, err := cmd.Output()
+	if err != nil {
+		// If the above command fails, try a more general approach
+		cmd = exec.Command("find", repoPath, "-type", "d", "-name", "micro-services")
+		cmd.Dir = repoPath
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find microservices directories: %w", err)
+		}
+	}
+
+	// Parse the output to get microservice directories
+	microserviceDirs := strings.Split(string(output), "\n")
+	var microservices []MicroserviceInfo
+	now := time.Now()
+
+	// Delete existing microservices for this repository and branch
+	m.db.WithContext(ctx).Where("repository_id = ? AND branch = ?", id, branch).Delete(&MicroserviceInfo{})
+
+	// Process each microservice directory
+	for _, dir := range microserviceDirs {
+		if dir == "" {
+			continue
+		}
+
+		// Check if this is a microservices root directory
+		if strings.HasSuffix(dir, "micro-services") {
+			// Find all subdirectories that might be microservices
+			cmd = exec.Command("find", dir, "-maxdepth", "1", "-type", "d", "-not", "-path", dir)
+			cmd.Dir = repoPath
+			subOutput, err := cmd.Output()
+			if err != nil {
+				continue
+			}
+
+			// Process each subdirectory
+			subDirs := strings.Split(string(subOutput), "\n")
+			for _, subDir := range subDirs {
+				if subDir == "" {
+					continue
+				}
+
+				// Check if the subdirectory has a Dockerfile
+				dockerfilePath := filepath.Join(subDir, "Dockerfile")
+				hasDockerfile := false
+				if _, err := os.Stat(dockerfilePath); err == nil {
+					hasDockerfile = true
+				}
+
+				// Create microservice info
+				relativePath, _ := filepath.Rel(repoPath, subDir)
+				microservice := MicroserviceInfo{
+					RepositoryID:  id,
+					Branch:        branch,
+					Path:          relativePath,
+					Name:          filepath.Base(subDir),
+					HasDockerfile: hasDockerfile,
+					LastUpdated:   now,
+					CreatedAt:     now,
+					UpdatedAt:     now,
+				}
+
+				// Save to database
+				result := m.db.WithContext(ctx).Create(&microservice)
+				if result.Error != nil {
+					log.Printf("Failed to save microservice %s: %v", microservice.Name, result.Error)
+					continue
+				}
+
+				microservices = append(microservices, microservice)
+			}
+		} else {
+			// This is a direct microservice directory
+			// Check if it has a Dockerfile
+			dockerfilePath := filepath.Join(dir, "Dockerfile")
+			hasDockerfile := false
+			if _, err := os.Stat(dockerfilePath); err == nil {
+				hasDockerfile = true
+			}
+
+			// Create microservice info
+			relativePath, _ := filepath.Rel(repoPath, dir)
+			microservice := MicroserviceInfo{
+				RepositoryID:  id,
+				Branch:        branch,
+				Path:          relativePath,
+				Name:          filepath.Base(dir),
+				HasDockerfile: hasDockerfile,
+				LastUpdated:   now,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+
+			// Save to database
+			result := m.db.WithContext(ctx).Create(&microservice)
+			if result.Error != nil {
+				log.Printf("Failed to save microservice %s: %v", microservice.Name, result.Error)
+				continue
+			}
+
+			microservices = append(microservices, microservice)
+		}
+	}
+
+	// If no microservices were found, try a more general approach
+	if len(microservices) == 0 {
+		// Look for directories with Dockerfiles
+		cmd = exec.Command("find", repoPath, "-name", "Dockerfile", "-type", "f")
+		cmd.Dir = repoPath
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find Dockerfiles: %w", err)
+		}
+
+		// Parse the output to get Dockerfile paths
+		dockerfilePaths := strings.Split(string(output), "\n")
+		for _, dockerfilePath := range dockerfilePaths {
+			if dockerfilePath == "" {
+				continue
+			}
+
+			// Get the directory containing the Dockerfile
+			serviceDir := filepath.Dir(dockerfilePath)
+			relativePath, _ := filepath.Rel(repoPath, serviceDir)
+
+			// Create microservice info
+			microservice := MicroserviceInfo{
+				RepositoryID:  id,
+				Branch:        branch,
+				Path:          relativePath,
+				Name:          filepath.Base(serviceDir),
+				HasDockerfile: true,
+				LastUpdated:   now,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+
+			// Save to database
+			result := m.db.WithContext(ctx).Create(&microservice)
+			if result.Error != nil {
+				log.Printf("Failed to save microservice %s: %v", microservice.Name, result.Error)
+				continue
+			}
+
+			microservices = append(microservices, microservice)
+		}
+	}
+
+	return microservices, nil
+}
+
+// GetMicroservices gets all microservices for a repository and branch
+func (m *RepositoryManager) GetMicroservices(ctx context.Context, id int64, branch string) ([]MicroserviceInfo, error) {
+	var microservices []MicroserviceInfo
+	result := m.db.WithContext(ctx).
+		Where("repository_id = ? AND branch = ?", id, branch).
+		Find(&microservices)
+
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get microservices: %w", result.Error)
+	}
+
+	return microservices, nil
 }

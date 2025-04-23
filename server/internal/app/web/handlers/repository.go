@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -39,6 +40,64 @@ func SetupRepository(app *fiber.App) {
 	repositoryGroup.Post("/:id/checkout", checkoutBranch(manager))
 	repositoryGroup.Get("/:id/commits", getBranchCommits(manager))
 	repositoryGroup.Post("/:id/sync", syncRepository(manager))
+
+	// Add new endpoint for detecting microservices
+	repositoryGroup.Post("/:id/detect-microservices", func(c *fiber.Ctx) error {
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid repository ID",
+			})
+		}
+
+		var req struct {
+			Branch string `json:"branch" binding:"required"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Branch is required",
+			})
+		}
+
+		microservices, err := manager.DetectMicroservices(c.Context(), int64(id), req.Branch)
+		if err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"microservices": microservices,
+		})
+	})
+
+	// Add endpoint to get detected microservices
+	repositoryGroup.Get("/:id/microservices", func(c *fiber.Ctx) error {
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid repository ID",
+			})
+		}
+
+		branch := c.Query("branch")
+		if branch == "" {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Branch parameter is required",
+			})
+		}
+
+		microservices, err := manager.GetMicroservices(c.Context(), int64(id), branch)
+		if err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"microservices": microservices,
+		})
+	})
 }
 
 // RepositoryResponse represents a repository in API responses

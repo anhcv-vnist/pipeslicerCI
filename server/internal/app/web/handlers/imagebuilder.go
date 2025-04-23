@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"os/exec"
 	"strings"
 	"time"
+
+	"crypto/md5"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/vanhcao3/pipeslicerCI/internal/ci"
@@ -59,6 +62,53 @@ type BuildImageResponse struct {
 	Success   bool      `json:"success"`
 	Output    string    `json:"output,omitempty"`
 	Error     string    `json:"error,omitempty"`
+}
+
+// BuildMultipleRequest represents the request body for building multiple Docker images
+type BuildMultipleRequest struct {
+	URL          string   `json:"url" form:"url"`
+	Branch       string   `json:"branch" form:"branch"`
+	ServicePaths []string `json:"servicePaths" form:"servicePaths"`
+	Tag          string   `json:"tag" form:"tag"`
+	Registry     string   `json:"registry" form:"registry"`
+	Username     string   `json:"username" form:"username"`
+	Password     string   `json:"password" form:"password"`
+}
+
+// DetectChangesRequest represents a request to detect changes between branches
+type DetectChangesRequest struct {
+	URL           string `json:"url"`
+	BaseBranch    string `json:"baseBranch"`
+	CurrentBranch string `json:"currentBranch"`
+	Registry      string `json:"registry"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+}
+
+// DetectChangesResponse represents a response from the detect changes endpoint
+type DetectChangesResponse struct {
+	ChangedServices []struct {
+		Path          string `json:"path"`
+		HasDockerfile bool   `json:"hasDockerfile"`
+	} `json:"changedServices"`
+}
+
+// DetectCommitChangesRequest represents the request body for detecting changed services between commits
+type DetectCommitChangesRequest struct {
+	URL           string `json:"url" form:"url"`
+	BaseCommit    string `json:"baseCommit" form:"baseCommit"`
+	CurrentCommit string `json:"currentCommit" form:"currentCommit"`
+	Registry      string `json:"registry" form:"registry"`
+	Username      string `json:"username" form:"username"`
+	Password      string `json:"password" form:"password"`
+}
+
+// DetectCommitChangesResponse represents a response from the detect commit changes endpoint
+type DetectCommitChangesResponse struct {
+	ChangedServices []struct {
+		Path          string `json:"path"`
+		HasDockerfile bool   `json:"hasDockerfile"`
+	} `json:"changedServices"`
 }
 
 // postBuildImage handles requests to build and push a Docker image
@@ -138,17 +188,6 @@ func postBuildImage(repoManager *repository.RepositoryManager) fiber.Handler {
 
 		return c.JSON(response)
 	}
-}
-
-// BuildMultipleRequest represents the request body for building multiple Docker images
-type BuildMultipleRequest struct {
-	URL          string   `json:"url" form:"url"`
-	Branch       string   `json:"branch" form:"branch"`
-	ServicePaths []string `json:"servicePaths" form:"servicePaths"`
-	Tag          string   `json:"tag" form:"tag"`
-	Registry     string   `json:"registry" form:"registry"`
-	Username     string   `json:"username" form:"username"`
-	Password     string   `json:"password" form:"password"`
 }
 
 // postBuildMultipleImages handles requests to build and push multiple Docker images
@@ -251,76 +290,59 @@ func postBuildMultipleImages(repoManager *repository.RepositoryManager) fiber.Ha
 	}
 }
 
-// DetectChangesRequest represents the request body for detecting changed services
-type DetectChangesRequest struct {
-	URL           string `json:"url" form:"url"`
-	BaseBranch    string `json:"baseBranch" form:"baseBranch"`
-	CurrentBranch string `json:"currentBranch" form:"currentBranch"`
-	Registry      string `json:"registry" form:"registry"`
-	Username      string `json:"username" form:"username"`
-	Password      string `json:"password" form:"password"`
-}
-
 // postDetectChanges handles requests to detect which services have changed between branches
 func postDetectChanges(repoManager *repository.RepositoryManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req DetectChangesRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid request body: " + err.Error(),
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid request body",
 			})
 		}
 
 		// Validate required fields
-		if req.URL == "" || req.BaseBranch == "" || req.CurrentBranch == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Missing required fields: url, baseBranch, and currentBranch are required",
+		if req.URL == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Repository URL is required",
+			})
+		}
+		if req.BaseBranch == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Base branch is required",
+			})
+		}
+		if req.CurrentBranch == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Current branch is required",
 			})
 		}
 
-		log.Printf("Detecting changes between %s and %s in %s", req.BaseBranch, req.CurrentBranch, req.URL)
-
-		// Get or clone repository
+		// Clone the repository if it doesn't exist
+		repoID := fmt.Sprintf("%x", md5.Sum([]byte(req.URL)))
 		repo, err := repoManager.GetRepositoryByURL(c.Context(), req.URL)
 		if err != nil {
-			log.Printf("Repository not found, attempting to clone: %v", err)
-			// Repository not found, clone it
-			repo, err = repoManager.CloneRepository(c.Context(), req.URL, "temp", "Repository for detecting changes")
+			// Repository doesn't exist, clone it
+			repo, err = repoManager.CloneRepository(c.Context(), req.URL, repoID, "Repository for detecting changes")
 			if err != nil {
-				return c.Status(500).JSON(fiber.Map{
-					"error": "Failed to clone repository: " + err.Error(),
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": fmt.Sprintf("Failed to clone repository: %v", err),
 				})
 			}
 		}
 
-		log.Printf("Repository found/cloned at: %s", repo.LocalPath)
-
-		// List available branches before checkout
-		cmd := exec.Command("git", "branch", "-a")
-		cmd.Dir = repo.LocalPath
-		branches, err := cmd.Output()
-		if err != nil {
-			log.Printf("Failed to list branches: %v", err)
-		} else {
-			log.Printf("Available branches:\n%s", string(branches))
-		}
-
 		// Checkout the current branch
-		log.Printf("Attempting to checkout branch: %s", req.CurrentBranch)
 		err = repoManager.CheckoutBranch(c.Context(), repo.ID, req.CurrentBranch)
 		if err != nil {
-			log.Printf("Failed to checkout branch: %v", err)
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to detect changed services: " + err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fmt.Sprintf("Failed to checkout branch: %v", err),
 			})
 		}
 
 		// Create workspace from repository
 		ws, err := ci.NewWorkspaceFromPath(repo.LocalPath)
 		if err != nil {
-			log.Printf("Failed to create workspace: %v", err)
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to create workspace: " + err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fmt.Sprintf("Failed to create workspace: %v", err),
 			})
 		}
 
@@ -330,28 +352,31 @@ func postDetectChanges(repoManager *repository.RepositoryManager) fiber.Handler 
 		// Detect changed services
 		changedServices, err := builder.DetectChangedServices(c.Context(), req.BaseBranch, req.CurrentBranch)
 		if err != nil {
-			log.Printf("Failed to detect changed services: %v", err)
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to detect changed services: " + err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fmt.Sprintf("Failed to detect changes: %v", err),
 			})
 		}
 
-		log.Printf("Detected changed services: %v", changedServices)
+		// Convert to response format
+		response := DetectChangesResponse{
+			ChangedServices: make([]struct {
+				Path          string `json:"path"`
+				HasDockerfile bool   `json:"hasDockerfile"`
+			}, len(changedServices)),
+		}
 
-		return c.JSON(fiber.Map{
-			"changedServices": changedServices,
-		})
+		for i, service := range changedServices {
+			response.ChangedServices[i] = struct {
+				Path          string `json:"path"`
+				HasDockerfile bool   `json:"hasDockerfile"`
+			}{
+				Path:          service.Path,
+				HasDockerfile: service.HasDockerfile,
+			}
+		}
+
+		return c.JSON(response)
 	}
-}
-
-// DetectCommitChangesRequest represents the request body for detecting changed services between commits
-type DetectCommitChangesRequest struct {
-	URL           string `json:"url" form:"url"`
-	BaseCommit    string `json:"baseCommit" form:"baseCommit"`
-	CurrentCommit string `json:"currentCommit" form:"currentCommit"`
-	Registry      string `json:"registry" form:"registry"`
-	Username      string `json:"username" form:"username"`
-	Password      string `json:"password" form:"password"`
 }
 
 // postDetectCommitChanges handles requests to detect which services have changed between commits
@@ -409,9 +434,25 @@ func postDetectCommitChanges(repoManager *repository.RepositoryManager) fiber.Ha
 
 		log.Printf("Detected changed services: %v", changedServices)
 
-		return c.JSON(fiber.Map{
-			"changedServices": changedServices,
-		})
+		// Convert to response format
+		response := DetectCommitChangesResponse{
+			ChangedServices: make([]struct {
+				Path          string `json:"path"`
+				HasDockerfile bool   `json:"hasDockerfile"`
+			}, len(changedServices)),
+		}
+
+		for i, service := range changedServices {
+			response.ChangedServices[i] = struct {
+				Path          string `json:"path"`
+				HasDockerfile bool   `json:"hasDockerfile"`
+			}{
+				Path:          service.Path,
+				HasDockerfile: service.HasDockerfile,
+			}
+		}
+
+		return c.JSON(response)
 	}
 }
 

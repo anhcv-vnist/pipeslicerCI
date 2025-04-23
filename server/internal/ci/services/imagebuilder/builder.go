@@ -31,6 +31,12 @@ type ImageBuildResult struct {
 	Error     error
 }
 
+// ChangedServiceInfo contains information about a changed service
+type ChangedServiceInfo struct {
+	Path          string `json:"path"`
+	HasDockerfile bool   `json:"hasDockerfile"`
+}
+
 // NewImageBuilder creates a new ImageBuilder instance
 func NewImageBuilder(ws ci.Workspace, registry, username, password string) *ImageBuilder {
 	return &ImageBuilder{
@@ -141,7 +147,7 @@ func (b *ImageBuilder) BuildMultipleServices(ctx context.Context, servicePaths [
 }
 
 // DetectChangedServices analyzes git changes to determine which services need to be rebuilt
-func (b *ImageBuilder) DetectChangedServices(ctx context.Context, baseBranch, currentBranch string) ([]string, error) {
+func (b *ImageBuilder) DetectChangedServices(ctx context.Context, baseBranch, currentBranch string) ([]ChangedServiceInfo, error) {
 	// First, make sure we have both branches available
 	// Fetch the base branch if it's not the current one
 	if baseBranch != b.workspace.Branch() {
@@ -186,10 +192,22 @@ func (b *ImageBuilder) DetectChangedServices(ctx context.Context, baseBranch, cu
 			}
 
 			services := strings.Split(string(lsOutput), "\n")
-			var allServices []string
+			var allServices []ChangedServiceInfo
 			for _, service := range services {
 				if service != "" {
-					allServices = append(allServices, service)
+					// Check if the service has a Dockerfile
+					dockerfilePath := filepath.Join(b.workspace.Dir(), service, "Dockerfile")
+					hasDockerfile := false
+					checkCmd := []string{"test", "-f", dockerfilePath}
+					_, checkErr := b.workspace.ExecuteCommand(ctx, checkCmd[0], checkCmd[1:])
+					if checkErr == nil {
+						hasDockerfile = true
+					}
+
+					allServices = append(allServices, ChangedServiceInfo{
+						Path:          service,
+						HasDockerfile: hasDockerfile,
+					})
 				}
 			}
 
@@ -237,10 +255,22 @@ func (b *ImageBuilder) DetectChangedServices(ctx context.Context, baseBranch, cu
 		}
 	}
 
-	// Convert map to slice
-	var changedServices []string
+	// Convert map to slice with Dockerfile information
+	var changedServices []ChangedServiceInfo
 	for service := range serviceMap {
-		changedServices = append(changedServices, service)
+		// Check if the service has a Dockerfile
+		dockerfilePath := filepath.Join(b.workspace.Dir(), service, "Dockerfile")
+		hasDockerfile := false
+		checkCmd := []string{"test", "-f", dockerfilePath}
+		_, checkErr := b.workspace.ExecuteCommand(ctx, checkCmd[0], checkCmd[1:])
+		if checkErr == nil {
+			hasDockerfile = true
+		}
+
+		changedServices = append(changedServices, ChangedServiceInfo{
+			Path:          service,
+			HasDockerfile: hasDockerfile,
+		})
 	}
 
 	return changedServices, nil

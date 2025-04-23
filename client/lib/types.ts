@@ -43,8 +43,13 @@ export interface DetectChangesRequest {
   currentBranch: string;
 }
 
+export interface ChangedService {
+  path: string;
+  hasDockerfile: boolean;
+}
+
 export interface DetectChangesResponse {
-  changedServices: string[];
+  changedServices: ChangedService[];
 }
 
 export interface DetectCommitChangesRequest {
@@ -54,7 +59,7 @@ export interface DetectCommitChangesRequest {
 }
 
 export interface DetectCommitChangesResponse {
-  changedServices: string[];
+  changedServices: ChangedService[];
 }
 
 export interface BuildImageRequest {
