@@ -1,342 +1,505 @@
 package handlers
 
 import (
-	"log"
-	"strconv"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/websocket/v2"
+	"github.com/vanhcao3/pipeslicerCI/internal/ci/models"
+	"github.com/vanhcao3/pipeslicerCI/internal/ci/repository"
+	"github.com/vanhcao3/pipeslicerCI/internal/ci/services"
 	"github.com/vanhcao3/pipeslicerCI/internal/ci/services/config"
-	"github.com/vanhcao3/pipeslicerCI/internal/ci/services/registry"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // SetupRegistry registers the registry endpoints
 func SetupRegistry(app *fiber.App) {
-	registryGroup := app.Group("/registry")
-
-	// Initialize registry manager
-	manager, err := registry.NewRegistryManager(config.PostgresConnectionString)
+	// Initialize database connection
+	db, err := gorm.Open(postgres.Open(config.PostgresConnectionString), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("Failed to initialize registry manager: %v", err)
+		panic("Failed to connect to database: " + err.Error())
 	}
+
+	// Auto-migrate the schema
+	err = db.AutoMigrate(&models.Registry{})
+	if err != nil {
+		panic("Failed to migrate database: " + err.Error())
+	}
+
+	// Initialize repositories
+	registryRepo := repository.NewRegistryRepository(db)
+
+	// Initialize services
+	registryService := services.NewRegistryService(registryRepo)
+
+	// Initialize handlers
+	registryHandler := NewRegistryHandler(registryService)
 
 	// Register routes
-	registryGroup.Get("/services", getServices(manager))
-	registryGroup.Get("/services/:service/tags", getServiceTags(manager))
-	registryGroup.Get("/services/:service/history", getServiceHistory(manager))
-	registryGroup.Get("/services/:service/latest", getLatestImage(manager))
-	registryGroup.Get("/services/:service/tags/:tag", getImageByTag(manager))
-	registryGroup.Post("/services/:service/tags", createTag(manager))
-	registryGroup.Post("/images", recordImage(manager))
-	registryGroup.Delete("/images/:id", deleteImage(manager))
+	registryHandler.RegisterRoutes(app)
 }
 
-// ImageResponse represents the response for an image
-type ImageResponse struct {
-	ID        int64     `json:"id"`
-	Service   string    `json:"service"`
-	Tag       string    `json:"tag"`
-	Commit    string    `json:"commit"`
-	Branch    string    `json:"branch"`
-	BuildTime time.Time `json:"buildTime"`
-	Status    string    `json:"status"`
-	Registry  string    `json:"registry"`
-	ImageName string    `json:"imageName"`
+// RegistryHandler handles HTTP requests for registry operations
+type RegistryHandler struct {
+	service *services.RegistryService
 }
 
-// getServices returns a handler for getting all services
-func getServices(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		services, err := manager.GetServiceList(c.Context())
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to get services: " + err.Error(),
-			})
-		}
+// NewRegistryHandler creates a new RegistryHandler instance
+func NewRegistryHandler(service *services.RegistryService) *RegistryHandler {
+	return &RegistryHandler{service: service}
+}
 
-		return c.JSON(fiber.Map{
-			"services": services,
+// RegisterRoutes registers the registry routes
+func (h *RegistryHandler) RegisterRoutes(app *fiber.App) {
+	registry := app.Group("/registries")
+	registry.Post("", h.CreateRegistry)
+	registry.Get("", h.ListRegistries)
+	registry.Get("/:id", h.GetRegistry)
+	registry.Put("/:id", h.UpdateRegistry)
+	registry.Delete("/:id", h.DeleteRegistry)
+
+	// Connection test endpoint
+	registry.Post("/:id/test-connection", h.TestConnection)
+
+	// WebSocket connection test endpoint
+	registry.Get("/:id/test-connection-ws", websocket.New(h.TestConnectionWS))
+
+	// List Docker images endpoint
+	registry.Get("/:id/images", h.ListImages)
+
+	// Image management endpoints
+	registry.Get("/:id/images/:image/:tag", h.GetImageDetail)
+	registry.Post("/:id/images/retag", h.RetagImage)
+	registry.Delete("/:id/images/:image/:tag", h.DeleteImage)
+	registry.Post("/images/copy", h.CopyImage)
+}
+
+// CreateRegistryRequest represents the request body for creating a registry
+type CreateRegistryRequest struct {
+	Name        string `json:"name" validate:"required"`
+	URL         string `json:"url" validate:"required"`
+	Username    string `json:"username" validate:"required"`
+	Password    string `json:"password" validate:"required"`
+	Description string `json:"description"`
+}
+
+// CreateRegistry handles the creation of a new registry
+func (h *RegistryHandler) CreateRegistry(c *fiber.Ctx) error {
+	var req CreateRegistryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
 		})
 	}
-}
 
-// getServiceTags returns a handler for getting all tags for a service
-func getServiceTags(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		if service == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service parameter is required",
+	registry := &models.Registry{
+		Name:        req.Name,
+		URL:         req.URL,
+		Username:    req.Username,
+		Password:    req.Password,
+		Description: req.Description,
+	}
+
+	if err := h.service.CreateRegistry(c.Context(), registry); err != nil {
+		// Check for duplicate name error
+		if err.Error() == "registry with this name already exists" {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "A registry with this name already exists",
 			})
 		}
-
-		tags, err := manager.GetTagsForService(c.Context(), service)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to get tags: " + err.Error(),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"service": service,
-			"tags":    tags,
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
 		})
 	}
+
+	return c.Status(fiber.StatusCreated).JSON(registry)
 }
 
-// getServiceHistory returns a handler for getting the build history for a service
-func getServiceHistory(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		if service == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service parameter is required",
-			})
-		}
-
-		limitStr := c.Query("limit", "10")
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid limit parameter: " + err.Error(),
-			})
-		}
-
-		images, err := manager.GetImageHistory(c.Context(), service, limit)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to get image history: " + err.Error(),
-			})
-		}
-
-		// Convert to response format
-		var response []ImageResponse
-		for _, img := range images {
-			response = append(response, ImageResponse{
-				ID:        img.ID,
-				Service:   img.Service,
-				Tag:       img.Tag,
-				Commit:    img.Commit,
-				Branch:    img.Branch,
-				BuildTime: img.BuildTime,
-				Status:    img.Status,
-				Registry:  img.Registry,
-				ImageName: img.ImageName,
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"service": service,
-			"images":  response,
+// ListRegistries handles retrieving all registries
+func (h *RegistryHandler) ListRegistries(c *fiber.Ctx) error {
+	registries, err := h.service.ListRegistries(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
 		})
 	}
+
+	return c.JSON(registries)
 }
 
-// getLatestImage returns a handler for getting the latest image for a service
-func getLatestImage(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		if service == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service parameter is required",
-			})
-		}
-
-		branch := c.Query("branch", "main")
-
-		image, err := manager.GetLatestImage(c.Context(), service, branch)
-		if err != nil {
-			return c.Status(404).JSON(fiber.Map{
-				"error": err.Error(),
-			})
-		}
-
-		// Convert to response format
-		response := ImageResponse{
-			ID:        image.ID,
-			Service:   image.Service,
-			Tag:       image.Tag,
-			Commit:    image.Commit,
-			Branch:    image.Branch,
-			BuildTime: image.BuildTime,
-			Status:    image.Status,
-			Registry:  image.Registry,
-			ImageName: image.ImageName,
-		}
-
-		return c.JSON(response)
-	}
-}
-
-// getImageByTag returns a handler for getting an image by tag
-func getImageByTag(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		tag := c.Params("tag")
-		if service == "" || tag == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service and tag parameters are required",
-			})
-		}
-
-		image, err := manager.GetImageByTag(c.Context(), service, tag)
-		if err != nil {
-			return c.Status(404).JSON(fiber.Map{
-				"error": err.Error(),
-			})
-		}
-
-		// Convert to response format
-		response := ImageResponse{
-			ID:        image.ID,
-			Service:   image.Service,
-			Tag:       image.Tag,
-			Commit:    image.Commit,
-			Branch:    image.Branch,
-			BuildTime: image.BuildTime,
-			Status:    image.Status,
-			Registry:  image.Registry,
-			ImageName: image.ImageName,
-		}
-
-		return c.JSON(response)
-	}
-}
-
-// TagRequest represents the request body for creating a new tag
-type TagRequest struct {
-	SourceTag string `json:"sourceTag" form:"sourceTag"`
-	NewTag    string `json:"newTag" form:"newTag"`
-}
-
-// createTag returns a handler for creating a new tag
-func createTag(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		service := c.Params("service")
-		if service == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Service parameter is required",
-			})
-		}
-
-		var req TagRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid request body: " + err.Error(),
-			})
-		}
-
-		if req.SourceTag == "" || req.NewTag == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Source tag and new tag are required",
-			})
-		}
-
-		err := manager.TagImage(c.Context(), service, req.SourceTag, req.NewTag)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to create tag: " + err.Error(),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"message":   "Tag created successfully",
-			"service":   service,
-			"sourceTag": req.SourceTag,
-			"newTag":    req.NewTag,
+// GetRegistry handles retrieving a specific registry
+func (h *RegistryHandler) GetRegistry(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
 		})
 	}
-}
 
-// RecordImageRequest represents the request body for recording an image
-type RecordImageRequest struct {
-	Service   string    `json:"service" form:"service"`
-	Tag       string    `json:"tag" form:"tag"`
-	Commit    string    `json:"commit" form:"commit"`
-	Branch    string    `json:"branch" form:"branch"`
-	BuildTime time.Time `json:"buildTime" form:"buildTime"`
-	Status    string    `json:"status" form:"status"`
-	Registry  string    `json:"registry" form:"registry"`
-	ImageName string    `json:"imageName" form:"imageName"`
-}
-
-// recordImage returns a handler for recording an image
-func recordImage(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		var req RecordImageRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid request body: " + err.Error(),
+	registry, err := h.service.GetRegistry(c.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
 			})
 		}
-
-		// Validate required fields
-		if req.Service == "" || req.Tag == "" || req.Commit == "" || req.Branch == "" || req.Status == "" || req.Registry == "" || req.ImageName == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "All fields are required",
-			})
-		}
-
-		// If build time is not provided, use current time
-		if req.BuildTime.IsZero() {
-			req.BuildTime = time.Now()
-		}
-
-		// Convert to metadata
-		metadata := registry.ImageMetadata{
-			Service:   req.Service,
-			Tag:       req.Tag,
-			Commit:    req.Commit,
-			Branch:    req.Branch,
-			BuildTime: req.BuildTime,
-			Status:    req.Status,
-			Registry:  req.Registry,
-			ImageName: req.ImageName,
-		}
-
-		// Record the image
-		err := manager.RecordImage(c.Context(), metadata)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to record image: " + err.Error(),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"message": "Image recorded successfully",
-			"service": req.Service,
-			"tag":     req.Tag,
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
 		})
+	}
+
+	return c.JSON(registry)
+}
+
+// UpdateRegistryRequest represents the request body for updating a registry
+type UpdateRegistryRequest struct {
+	Name        string `json:"name" validate:"required"`
+	URL         string `json:"url" validate:"required"`
+	Username    string `json:"username" validate:"required"`
+	Password    string `json:"password" validate:"required"`
+	Description string `json:"description"`
+}
+
+// UpdateRegistry handles updating a registry
+func (h *RegistryHandler) UpdateRegistry(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	var req UpdateRegistryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	registry := &models.Registry{
+		ID:          uint(id),
+		Name:        req.Name,
+		URL:         req.URL,
+		Username:    req.Username,
+		Password:    req.Password,
+		Description: req.Description,
+	}
+
+	if err := h.service.UpdateRegistry(c.Context(), registry); err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(registry)
+}
+
+// DeleteRegistry handles deleting a registry
+func (h *RegistryHandler) DeleteRegistry(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	if err := h.service.DeleteRegistry(c.Context(), uint(id)); err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// TestConnection handles testing the connection to a registry
+func (h *RegistryHandler) TestConnection(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	status, err := h.service.TestConnection(c.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(status)
+}
+
+// TestConnectionWS handles WebSocket connection for testing registry connectivity
+func (h *RegistryHandler) TestConnectionWS(c *websocket.Conn) {
+	// Get the Fiber context from the WebSocket connection
+	ctx := c.Locals("ctx").(*fiber.Ctx)
+
+	// Extract registry ID from path
+	id, err := ctx.ParamsInt("id")
+	if err != nil {
+		c.WriteJSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+		c.Close()
+		return
+	}
+
+	// Get the registry
+	_, err = h.service.GetRegistry(ctx.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			c.WriteJSON(fiber.Map{
+				"error": "Registry not found",
+			})
+			c.Close()
+			return
+		}
+		c.WriteJSON(fiber.Map{
+			"error": err.Error(),
+		})
+		c.Close()
+		return
+	}
+
+	// Send initial message
+	c.WriteJSON(fiber.Map{
+		"status":  "connecting",
+		"message": "Testing connection to registry...",
+	})
+
+	// Test connection in a loop
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Initial test
+	status, err := h.service.TestConnection(ctx.Context(), uint(id))
+	if err != nil {
+		c.WriteJSON(fiber.Map{
+			"status":  "error",
+			"message": err.Error(),
+		})
+	} else {
+		c.WriteJSON(status)
+	}
+
+	// Listen for client messages (for closing the connection)
+	go func() {
+		for {
+			_, _, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Continue testing connection periodically
+	for {
+		select {
+		case <-ticker.C:
+			status, err := h.service.TestConnection(ctx.Context(), uint(id))
+			if err != nil {
+				c.WriteJSON(fiber.Map{
+					"status":  "error",
+					"message": err.Error(),
+					"time":    time.Now().Format(time.RFC3339),
+				})
+			} else {
+				// Add timestamp to the response
+				response := fiber.Map{
+					"status":  status.Status,
+					"message": status.Message,
+					"time":    time.Now().Format(time.RFC3339),
+				}
+				c.WriteJSON(response)
+			}
+		case <-ctx.Context().Done():
+			return
+		}
 	}
 }
 
-// deleteImage returns a handler for deleting an image
-func deleteImage(manager *registry.RegistryManager) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		idStr := c.Params("id")
-		if idStr == "" {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "ID parameter is required",
-			})
-		}
-
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid ID parameter: " + err.Error(),
-			})
-		}
-
-		err = manager.DeleteImage(c.Context(), id)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Failed to delete image: " + err.Error(),
-			})
-		}
-
-		return c.JSON(fiber.Map{
-			"message": "Image deleted successfully",
-			"id":      id,
+// ListImages handles retrieving all Docker images from a registry
+func (h *RegistryHandler) ListImages(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
 		})
 	}
+
+	images, err := h.service.ListImages(c.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(images)
+}
+
+// GetImageDetail handles retrieving detailed information about a Docker image
+func (h *RegistryHandler) GetImageDetail(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	imageName := c.Params("image")
+	tag := c.Params("tag")
+
+	detail, err := h.service.GetImageDetail(c.Context(), uint(id), imageName, tag)
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(detail)
+}
+
+// RetagImageRequest represents the request to retag a Docker image
+type RetagImageRequest struct {
+	SourceImage      string `json:"source_image"`
+	SourceTag        string `json:"source_tag"`
+	DestinationImage string `json:"destination_image"`
+	DestinationTag   string `json:"destination_tag"`
+}
+
+// RetagImage handles retagging a Docker image
+func (h *RegistryHandler) RetagImage(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	var req RetagImageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Log the retag request
+	fmt.Printf("Retag request: registry ID=%d, source=%s:%s, destination=%s:%s\n",
+		id, req.SourceImage, req.SourceTag, req.DestinationImage, req.DestinationTag)
+
+	// Convert handler's RetagImageRequest to service's RetagImageRequest
+	serviceReq := services.RetagImageRequest{
+		SourceImage:      req.SourceImage,
+		SourceTag:        req.SourceTag,
+		DestinationImage: req.DestinationImage,
+		DestinationTag:   req.DestinationTag,
+	}
+
+	err = h.service.RetagImage(c.Context(), uint(id), serviceReq)
+	if err != nil {
+		// Log the detailed error
+		fmt.Printf("Error retagging image: %v\n", err)
+
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
+
+// DeleteImage handles deleting a Docker image
+func (h *RegistryHandler) DeleteImage(c *fiber.Ctx) error {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid registry ID",
+		})
+	}
+
+	imageName := c.Params("image")
+	tag := c.Params("tag")
+
+	err = h.service.DeleteImage(c.Context(), uint(id), imageName, tag)
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
+
+// CopyImageRequest represents the request to copy a Docker image between registries
+type CopyImageRequest struct {
+	SourceRegistryID      uint   `json:"source_registry_id"`
+	SourceImage           string `json:"source_image"`
+	SourceTag             string `json:"source_tag"`
+	DestinationRegistryID uint   `json:"destination_registry_id"`
+	DestinationImage      string `json:"destination_image"`
+	DestinationTag        string `json:"destination_tag"`
+}
+
+// CopyImage handles copying a Docker image between registries
+func (h *RegistryHandler) CopyImage(c *fiber.Ctx) error {
+	var req CopyImageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	err := h.service.CopyImage(c.Context(), services.CopyImageRequest(req))
+	if err != nil {
+		if errors.Is(err, repository.ErrRegistryNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Registry not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.SendStatus(fiber.StatusOK)
 }

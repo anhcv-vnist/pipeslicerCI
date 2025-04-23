@@ -1,4 +1,4 @@
-import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest, DetectChangesRequest, DetectChangesResponse, DetectCommitChangesRequest, DetectCommitChangesResponse, BuildImageRequest, BuildImageResponse } from './types';
+import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest, DetectChangesRequest, DetectChangesResponse, DetectCommitChangesRequest, DetectCommitChangesResponse, BuildImageRequest, BuildImageResponse, Registry, CreateRegistryRequest, UpdateRegistryRequest, DockerImage, DockerImageDetail, RetagImageRequest, CopyImageRequest } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -159,4 +159,270 @@ export const buildImage = async (request: BuildImageRequest): Promise<BuildImage
     success: true,
     message: data.message || 'Build started successfully'
   };
+};
+
+// Registry API functions
+export const listRegistries = async (): Promise<Registry[]> => {
+  try {
+    // Use Next.js API route instead of direct API call
+    const timestamp = new Date().getTime();
+    const response = await fetch(`/api/registries?_=${timestamp}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      }
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to fetch registries');
+    }
+    
+    const data = await response.json();
+    console.log('Raw registry data:', data);
+    
+    // Ensure we always return an array
+    if (Array.isArray(data)) {
+      return data;
+    } else if (data && typeof data === 'object') {
+      // If it's a single object with no array wrapper, wrap it in an array
+      // Also handle the case where the data might be in a nested property
+      if (data.registries && Array.isArray(data.registries)) {
+        return data.registries;
+      }
+      return [data];
+    }
+    
+    // Return empty array as fallback
+    return [];
+  } catch (error) {
+    console.error('Error in listRegistries:', error);
+    throw error;
+  }
+};
+
+export const getRegistry = async (id: number): Promise<Registry> => {
+  try {
+    // Use Next.js API route instead of direct API call
+    const timestamp = new Date().getTime();
+    const response = await fetch(`/api/registries/${id}?_=${timestamp}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      }
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to fetch registry');
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Error in getRegistry:', error);
+    throw error;
+  }
+};
+
+export const createRegistry = async (request: CreateRegistryRequest): Promise<Registry> => {
+  try {
+    // Use Next.js API route instead of direct API call
+    const response = await fetch('/api/registries/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to create registry');
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Error in createRegistry:', error);
+    throw error;
+  }
+};
+
+export const updateRegistry = async (id: number, request: UpdateRegistryRequest): Promise<Registry> => {
+  try {
+    // Use Next.js API route instead of direct API call
+    const response = await fetch(`/api/registries/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to update registry');
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Error in updateRegistry:', error);
+    throw error;
+  }
+};
+
+export const deleteRegistry = async (id: number): Promise<void> => {
+  try {
+    // Use Next.js API route instead of direct API call
+    const response = await fetch(`/api/registries/${id}`, {
+      method: 'DELETE',
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to delete registry');
+    }
+  } catch (error) {
+    console.error('Error in deleteRegistry:', error);
+    throw error;
+  }
+};
+
+// Docker Image Management API Functions
+export const listRegistryImages = async (registryId: number): Promise<DockerImage[]> => {
+  try {
+    const response = await fetch(`/api/registries/${registryId}/images`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      }
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to fetch registry images');
+    }
+    
+    const data = await response.json();
+    return data.images || [];
+  } catch (error) {
+    console.error('Error in listRegistryImages:', error);
+    throw error;
+  }
+};
+
+export const getImageDetail = async (
+  registryId: number, 
+  imageName: string, 
+  tag: string
+): Promise<DockerImageDetail> => {
+  try {
+    const response = await fetch(`/api/registries/${registryId}/images/${encodeURIComponent(imageName)}/${encodeURIComponent(tag)}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      }
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to fetch image details');
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Error in getImageDetail:', error);
+    throw error;
+  }
+};
+
+export const retagImage = async (
+  registryId: number, 
+  request: RetagImageRequest
+): Promise<void> => {
+  try {
+    const response = await fetch(`/api/registries/${registryId}/images/retag`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to retag image');
+    }
+  } catch (error) {
+    console.error('Error in retagImage:', error);
+    throw error;
+  }
+};
+
+export const deleteImage = async (
+  registryId: number, 
+  imageName: string, 
+  tag: string
+): Promise<void> => {
+  try {
+    // Use 'latest' as a default tag if the tag is empty
+    const tagToUse = tag || 'latest';
+    
+    const response = await fetch(`/api/registries/${registryId}/images/${encodeURIComponent(imageName)}/${encodeURIComponent(tagToUse)}`, {
+      method: 'DELETE',
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to delete image');
+    }
+  } catch (error) {
+    console.error('Error in deleteImage:', error);
+    throw error;
+  }
+};
+
+export const copyImage = async (request: CopyImageRequest): Promise<void> => {
+  try {
+    const response = await fetch('/api/registries/images/copy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to copy image');
+    }
+  } catch (error) {
+    console.error('Error in copyImage:', error);
+    throw error;
+  }
+};
+
+export interface TestConnectionResponse {
+  status: string;
+  message: string;
+}
+
+export const testRegistryConnection = async (registryId: number): Promise<TestConnectionResponse> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/registries/${registryId}/test-connection`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to test registry connection');
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Error in testRegistryConnection:', error);
+    throw error;
+  }
 }; 
