@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Repository, Branch } from '@/lib/types';
-import { listRepositories, getRepositoryBranches, detectChanges, detectCommitChanges } from '@/lib/api';
+import { listRepositories, getRepositoryBranches, detectChanges, detectCommitChanges, buildImage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
-import { GitBranch, ArrowRight, ChevronDown, Globe, Laptop, AlertCircle, Loader2, GitCompare, GitCommit, X } from 'lucide-react';
+import { GitBranch, ArrowRight, ChevronDown, Globe, Laptop, AlertCircle, Loader2, GitCompare, GitCommit, X, Package } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 
 interface ChangedService {
@@ -193,6 +193,9 @@ export default function ImageBuilderPage() {
   const [commitValidationAttempted, setCommitValidationAttempted] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const { toast } = useToast();
+  const [buildingServices, setBuildingServices] = useState<{[key: string]: boolean}>({});
+  const [buildTag, setBuildTag] = useState<string>('v1.0.0');
+  const [registry, setRegistry] = useState<string>('localhost:5000');
 
   // Load saved state after component mounts
   useEffect(() => {
@@ -525,6 +528,47 @@ export default function ImageBuilderPage() {
     return branches.filter(branch => branch.name !== excludeBranch);
   };
 
+  const handleBuildService = async (servicePath: string) => {
+    if (!selectedRepo) return;
+
+    setBuildingServices(prev => ({ ...prev, [servicePath]: true }));
+    
+    try {
+      const result = await buildImage({
+        url: selectedRepo.url,
+        branch: currentBranch || currentCommit,
+        servicePaths: [servicePath],
+        tag: buildTag,
+        registry: registry,
+      });
+
+      // Check if the response indicates success
+      if (result && result.success) {
+        toast({
+          title: 'Build Successful',
+          description: `Successfully built image for ${servicePath}`,
+          variant: 'default',
+        });
+      } else {
+        // Handle case where API returned success but with error message
+        toast({
+          title: 'Build Failed',
+          description: result?.message || 'Failed to start build',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Error building image:', error);
+      toast({
+        title: 'Build Error',
+        description: error instanceof Error ? error.message : 'Failed to build image',
+        variant: 'destructive',
+      });
+    } finally {
+      setBuildingServices(prev => ({ ...prev, [servicePath]: false }));
+    }
+  };
+
   return (
     <div className="container mx-auto py-10 space-y-8">
       <div className="flex items-center justify-between">
@@ -790,22 +834,66 @@ export default function ImageBuilderPage() {
               </div>
             )}
           </div>
+
+          {/* Build Configuration */}
+          {changedServices && changedServices.length > 0 && (
+            <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Build Tag</label>
+                <Input
+                  value={buildTag}
+                  onChange={(e) => setBuildTag(e.target.value)}
+                  placeholder="e.g. v1.0.0"
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Registry</label>
+                <Input
+                  value={registry}
+                  onChange={(e) => setRegistry(e.target.value)}
+                  placeholder="e.g. localhost:5000"
+                  className="h-9"
+                />
+              </div>
+            </div>
+          )}
+
           {changedServices && changedServices.length > 0 ? (
             <div className="grid gap-2">
               {changedServices.map((service) => (
                 <div
                   key={service}
-                  className="flex items-center gap-2 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
+                  className="flex items-center justify-between gap-2 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
                 >
-                  <GitBranch className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{service}</span>
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium">{service}</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => handleBuildService(service)}
+                    disabled={buildingServices[service]}
+                  >
+                    {buildingServices[service] ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Building...
+                      </>
+                    ) : (
+                      <>
+                        <Package className="h-4 w-4 mr-2" />
+                        Build
+                      </>
+                    )}
+                  </Button>
                 </div>
               ))}
             </div>
           ) : (
             <div className="flex items-center gap-2 p-4 bg-muted rounded-lg text-muted-foreground">
               <AlertCircle className="h-5 w-5" />
-              <span>No service changes detected between <code className="text-sm">{baseBranch}</code> and <code className="text-sm">{currentBranch}</code></span>
+              <span>No service changes detected between <code className="text-sm">{baseBranch || baseCommit}</code> and <code className="text-sm">{currentBranch || currentCommit}</code></span>
             </div>
           )}
         </div>

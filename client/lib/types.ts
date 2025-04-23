@@ -55,4 +55,17 @@ export interface DetectCommitChangesRequest {
 
 export interface DetectCommitChangesResponse {
   changedServices: string[];
+}
+
+export interface BuildImageRequest {
+  url: string;
+  branch: string;
+  servicePaths: string[];
+  tag: string;
+  registry: string;
+}
+
+export interface BuildImageResponse {
+  success: boolean;
+  message: string;
 } 

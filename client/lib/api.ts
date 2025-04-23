@@ -1,4 +1,4 @@
-import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest, DetectChangesRequest, DetectChangesResponse, DetectCommitChangesRequest, DetectCommitChangesResponse } from './types';
+import { Repository, Branch, Commit, CloneRepositoryRequest, CheckoutBranchRequest, DetectChangesRequest, DetectChangesResponse, DetectCommitChangesRequest, DetectCommitChangesResponse, BuildImageRequest, BuildImageResponse } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -134,5 +134,29 @@ export const detectCommitChanges = async (request: DetectCommitChangesRequest): 
   const data = await response.json();
   return {
     changedServices: data.changedServices || [],
+  };
+};
+
+export const buildImage = async (request: BuildImageRequest): Promise<BuildImageResponse> => {
+  const response = await fetch(`${API_BASE_URL}/imagebuilder/build-multiple`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  // Parse the response data
+  const data = await response.json();
+  
+  // If the response is not OK, throw an error
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to build image');
+  }
+
+  // Return the parsed response data
+  return {
+    success: true,
+    message: data.message || 'Build started successfully'
   };
 }; 
