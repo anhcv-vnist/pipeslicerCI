@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Repository, Branch } from '@/lib/types';
-import { listRepositories, getRepositoryBranches, detectChanges, detectCommitChanges, buildImage } from '@/lib/api';
+import { Repository, Branch, ChangedService, Commit } from '@/lib/types';
+import { listRepositories, getRepositoryBranches, detectChanges, detectCommitChanges, buildImage, getBranchCommits } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -15,11 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { GitBranch, ArrowRight, ChevronDown, Globe, Laptop, AlertCircle, Loader2, GitCompare, GitCommit, X, Package, CheckSquare, Square } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-
-interface ChangedService {
-  name: string;
-  path: string;
-}
+import { cn } from "@/lib/utils";
 
 const BRANCHES_PER_PAGE = 20;
 
@@ -186,7 +182,7 @@ export default function ImageBuilderPage() {
   const [currentBranch, setCurrentBranch] = useState<string>('');
   const [baseCommit, setBaseCommit] = useState<string>('');
   const [currentCommit, setCurrentCommit] = useState<string>('');
-  const [changedServices, setChangedServices] = useState<string[] | null>(null);
+  const [changedServices, setChangedServices] = useState<ChangedService[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [activeComparison, setActiveComparison] = useState<'branch' | 'commit' | null>(null);
@@ -199,6 +195,17 @@ export default function ImageBuilderPage() {
   const [registry, setRegistry] = useState<string>('localhost:5000');
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [baseBranchForCommits, setBaseBranchForCommits] = useState<string>('');
+  const [currentBranchForCommits, setCurrentBranchForCommits] = useState<string>('');
+  const [baseCommits, setBaseCommits] = useState<Commit[]>([]);
+  const [currentCommits, setCurrentCommits] = useState<Commit[]>([]);
+  const [loadingBaseCommits, setLoadingBaseCommits] = useState(false);
+  const [loadingCurrentCommits, setLoadingCurrentCommits] = useState(false);
+  const [displayedBaseCommits, setDisplayedBaseCommits] = useState<Commit[]>([]);
+  const [displayedCurrentCommits, setDisplayedCurrentCommits] = useState<Commit[]>([]);
+  const [baseCommitsPage, setBaseCommitsPage] = useState(1);
+  const [currentCommitsPage, setCurrentCommitsPage] = useState(1);
+  const COMMITS_PER_PAGE = 10;
 
   // Load saved state after component mounts
   useEffect(() => {
@@ -212,6 +219,20 @@ export default function ImageBuilderPage() {
     setBaseCommit(getLocalStorageItem('baseCommit') || '');
     setCurrentCommit(getLocalStorageItem('currentCommit') || '');
     setActiveComparison(getLocalStorageItem('activeComparison') as 'branch' | 'commit' | null);
+    
+    // Load saved selected services
+    const savedSelectedServices = getLocalStorageItem('selectedServices');
+    if (savedSelectedServices) {
+      try {
+        const parsedServices = JSON.parse(savedSelectedServices);
+        if (Array.isArray(parsedServices)) {
+          setSelectedServices(parsedServices);
+        }
+      } catch (e) {
+        console.error('Error parsing saved selected services:', e);
+        removeLocalStorageItem('selectedServices');
+      }
+    }
   }, []);
 
   // Save state to localStorage when it changes
@@ -263,6 +284,24 @@ export default function ImageBuilderPage() {
     }
   }, [activeComparison]);
 
+  // Save selected services to localStorage when they change
+  useEffect(() => {
+    if (selectedServices.length > 0) {
+      setLocalStorageItem('selectedServices', JSON.stringify(selectedServices));
+    } else {
+      removeLocalStorageItem('selectedServices');
+    }
+  }, [selectedServices]);
+
+  // Save state when component unmounts
+  useEffect(() => {
+    return () => {
+      if (selectedServices.length > 0) {
+        setLocalStorageItem('selectedServices', JSON.stringify(selectedServices));
+      }
+    };
+  }, [selectedServices]);
+
   // Load branches when repository is selected (either from new selection or from localStorage)
   useEffect(() => {
     if (selectedRepo) {
@@ -300,6 +339,109 @@ export default function ImageBuilderPage() {
       setDisplayedRemoteBranches(sortedRemoteBranches.slice(0, BRANCHES_PER_PAGE));
     }
   }, [allBranches]);
+
+  // Load base commits when base branch is selected
+  useEffect(() => {
+    if (selectedRepo && baseBranchForCommits) {
+      fetchBaseCommits(selectedRepo.id, baseBranchForCommits);
+    } else {
+      setBaseCommits([]);
+      setDisplayedBaseCommits([]);
+      setBaseCommitsPage(1);
+    }
+  }, [selectedRepo, baseBranchForCommits]);
+
+  // Load current commits when current branch is selected
+  useEffect(() => {
+    if (selectedRepo && currentBranchForCommits) {
+      fetchCurrentCommits(selectedRepo.id, currentBranchForCommits);
+    } else {
+      setCurrentCommits([]);
+      setDisplayedCurrentCommits([]);
+      setCurrentCommitsPage(1);
+    }
+  }, [selectedRepo, currentBranchForCommits]);
+
+  // Update displayed base commits when base commits change or page changes
+  useEffect(() => {
+    if (baseCommits.length > 0) {
+      const endIndex = baseCommitsPage * COMMITS_PER_PAGE;
+      setDisplayedBaseCommits(baseCommits.slice(0, endIndex));
+    } else {
+      setDisplayedBaseCommits([]);
+    }
+  }, [baseCommits, baseCommitsPage]);
+
+  // Update displayed current commits when current commits change or page changes
+  useEffect(() => {
+    if (currentCommits.length > 0) {
+      const endIndex = currentCommitsPage * COMMITS_PER_PAGE;
+      setDisplayedCurrentCommits(currentCommits.slice(0, endIndex));
+    } else {
+      setDisplayedCurrentCommits([]);
+    }
+  }, [currentCommits, currentCommitsPage]);
+
+  const handleBaseCommitsScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    const { scrollTop, scrollHeight, clientHeight } = target;
+    
+    // If we're near the bottom (within 50px) and there are more commits to load
+    if (scrollHeight - scrollTop - clientHeight < 50 && 
+        displayedBaseCommits.length < baseCommits.length) {
+      setBaseCommitsPage(prev => prev + 1);
+    }
+  };
+
+  const handleCurrentCommitsScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    const { scrollTop, scrollHeight, clientHeight } = target;
+    
+    // If we're near the bottom (within 50px) and there are more commits to load
+    if (scrollHeight - scrollTop - clientHeight < 50 && 
+        displayedCurrentCommits.length < currentCommits.length) {
+      setCurrentCommitsPage(prev => prev + 1);
+    }
+  };
+
+  const fetchBaseCommits = async (repoId: number, branchName: string) => {
+    setLoadingBaseCommits(true);
+    try {
+      const data = await getBranchCommits(repoId, branchName);
+      setBaseCommits(data);
+    } catch (error) {
+      console.error('Error fetching base commits:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to fetch base commits',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingBaseCommits(false);
+    }
+  };
+
+  const fetchCurrentCommits = async (repoId: number, branchName: string) => {
+    setLoadingCurrentCommits(true);
+    try {
+      const data = await getBranchCommits(repoId, branchName);
+      setCurrentCommits(data);
+    } catch (error) {
+      console.error('Error fetching current commits:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to fetch current commits',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingCurrentCommits(false);
+    }
+  };
+
+  // Format commit hash to be shorter and more readable
+  const formatCommitHash = (hash: string) => {
+    return hash.substring(0, 7);
+  };
 
   // Add back the initial repository loading
   useEffect(() => {
@@ -353,6 +495,7 @@ export default function ImageBuilderPage() {
     setBaseBranch('');
     setCurrentBranch('');
     setChangedServices(null);
+    setSelectedServices([]); // Clear selected services
     setAllBranches([]);
     setDisplayedLocalBranches([]);
     setDisplayedRemoteBranches([]);
@@ -360,6 +503,7 @@ export default function ImageBuilderPage() {
     // Clear localStorage for branch-related items when changing repository
     removeLocalStorageItem('baseBranch');
     removeLocalStorageItem('currentBranch');
+    removeLocalStorageItem('selectedServices'); // Clear saved selected services
     
     if (repo) {
       console.log('Selected repository:', repo);
@@ -391,9 +535,11 @@ export default function ImageBuilderPage() {
     setChangedServices(null);
     setActiveComparison(null);
     setBranchValidationAttempted(false);
+    setSelectedServices([]); // Clear selected services
     removeLocalStorageItem('baseBranch');
     removeLocalStorageItem('currentBranch');
     removeLocalStorageItem('activeComparison');
+    removeLocalStorageItem('selectedServices'); // Clear saved selected services
   };
 
   const clearCommitComparison = () => {
@@ -402,9 +548,19 @@ export default function ImageBuilderPage() {
     setChangedServices(null);
     setActiveComparison(null);
     setCommitValidationAttempted(false);
+    setSelectedServices([]); // Clear selected services
+    setBaseBranchForCommits('');
+    setCurrentBranchForCommits('');
+    setBaseCommits([]);
+    setCurrentCommits([]);
+    setDisplayedBaseCommits([]);
+    setDisplayedCurrentCommits([]);
+    setBaseCommitsPage(1);
+    setCurrentCommitsPage(1);
     removeLocalStorageItem('baseCommit');
     removeLocalStorageItem('currentCommit');
     removeLocalStorageItem('activeComparison');
+    removeLocalStorageItem('selectedServices'); // Clear saved selected services
   };
 
   const handleDetectChanges = async () => {
@@ -531,24 +687,39 @@ export default function ImageBuilderPage() {
     return branches.filter(branch => branch.name !== excludeBranch);
   };
 
+  // Handle service selection with persistence
   const handleServiceSelection = (servicePath: string) => {
     setSelectedServices(prev => {
-      if (prev.includes(servicePath)) {
-        return prev.filter(s => s !== servicePath);
+      const newSelection = prev.includes(servicePath)
+        ? prev.filter(s => s !== servicePath)
+        : [...prev, servicePath];
+      
+      // Save to localStorage immediately
+      if (newSelection.length > 0) {
+        setLocalStorageItem('selectedServices', JSON.stringify(newSelection));
       } else {
-        return [...prev, servicePath];
+        removeLocalStorageItem('selectedServices');
       }
+      
+      return newSelection;
     });
   };
 
+  // Handle select all with persistence
   const handleSelectAllServices = () => {
     if (changedServices && changedServices.length > 0) {
-      if (selectedServices.length === changedServices.length) {
+      const availableServices = changedServices
+        .filter(service => service.hasDockerfile)
+        .map(service => service.path);
+      
+      if (selectedServices.length === availableServices.length) {
         // If all are selected, deselect all
         setSelectedServices([]);
+        removeLocalStorageItem('selectedServices');
       } else {
-        // Otherwise, select all
-        setSelectedServices([...changedServices]);
+        // Otherwise, select all available services
+        setSelectedServices([...availableServices]);
+        setLocalStorageItem('selectedServices', JSON.stringify(availableServices));
       }
     }
   };
@@ -791,35 +962,133 @@ export default function ImageBuilderPage() {
 
         <div className="p-6 grid gap-8">
           <div className="grid grid-cols-2 gap-8">
+            {/* Base Branch and Commit Selection */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <GitCommit className="h-5 w-5 text-muted-foreground" />
-                <h3 className="text-lg font-medium">Base Commit</h3>
+                <GitBranch className="h-5 w-5 text-muted-foreground" />
+                <h3 className="text-lg font-medium">Base Branch</h3>
               </div>
               {isClient && (
-                <Input
-                  placeholder="Enter base commit hash"
-                  value={baseCommit}
-                  onChange={(e) => setBaseCommit(e.target.value)}
-                  className="h-12"
+                <BranchSelect
+                  value={baseBranchForCommits}
+                  onValueChange={setBaseBranchForCommits}
+                  placeholder="Select base branch"
+                  excludeBranch=""
+                  displayedLocalBranches={displayedLocalBranches}
+                  displayedRemoteBranches={displayedRemoteBranches}
+                  allBranches={allBranches}
+                  loadingBranches={loadingBranches}
+                  onShowMoreLocal={handleShowMoreLocal}
+                  onShowMoreRemote={handleShowMoreRemote}
                   disabled={activeComparison === 'branch'}
                 />
               )}
+
+              {baseBranchForCommits && (
+                <div className="space-y-4 mt-4">
+                  <div className="flex items-center gap-2">
+                    <GitCommit className="h-5 w-5 text-muted-foreground" />
+                    <h3 className="text-lg font-medium">Base Commit</h3>
+                  </div>
+                  {isClient && (
+                    <Select
+                      value={baseCommit}
+                      onValueChange={setBaseCommit}
+                      disabled={activeComparison === 'branch' || loadingBaseCommits}
+                    >
+                      <SelectTrigger className="h-12">
+                        <SelectValue placeholder={loadingBaseCommits ? "Loading commits..." : "Select base commit"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <div 
+                          className="max-h-[300px] overflow-y-auto" 
+                          onScroll={handleBaseCommitsScroll}
+                        >
+                          {displayedBaseCommits.map((commit) => (
+                            <SelectItem key={commit.hash} value={commit.hash}>
+                              <div className="flex flex-col">
+                                <span className="font-medium truncate">{commit.message}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatCommitHash(commit.hash)} • {new Date(commit.timestamp).toLocaleString()}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                          {displayedBaseCommits.length < baseCommits.length && (
+                            <div className="p-2 text-center text-sm text-muted-foreground">
+                              Scroll down to load more commits...
+                            </div>
+                          )}
+                        </div>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              )}
             </div>
 
+            {/* Current Branch and Commit Selection */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <GitCommit className="h-5 w-5 text-muted-foreground" />
-                <h3 className="text-lg font-medium">Current Commit</h3>
+                <GitBranch className="h-5 w-5 text-muted-foreground" />
+                <h3 className="text-lg font-medium">Current Branch</h3>
               </div>
               {isClient && (
-                <Input
-                  placeholder="Enter current commit hash"
-                  value={currentCommit}
-                  onChange={(e) => setCurrentCommit(e.target.value)}
-                  className="h-12"
+                <BranchSelect
+                  value={currentBranchForCommits}
+                  onValueChange={setCurrentBranchForCommits}
+                  placeholder="Select current branch"
+                  excludeBranch=""
+                  displayedLocalBranches={displayedLocalBranches}
+                  displayedRemoteBranches={displayedRemoteBranches}
+                  allBranches={allBranches}
+                  loadingBranches={loadingBranches}
+                  onShowMoreLocal={handleShowMoreLocal}
+                  onShowMoreRemote={handleShowMoreRemote}
                   disabled={activeComparison === 'branch'}
                 />
+              )}
+
+              {currentBranchForCommits && (
+                <div className="space-y-4 mt-4">
+                  <div className="flex items-center gap-2">
+                    <GitCommit className="h-5 w-5 text-muted-foreground" />
+                    <h3 className="text-lg font-medium">Current Commit</h3>
+                  </div>
+                  {isClient && (
+                    <Select
+                      value={currentCommit}
+                      onValueChange={setCurrentCommit}
+                      disabled={activeComparison === 'branch' || loadingCurrentCommits}
+                    >
+                      <SelectTrigger className="h-12">
+                        <SelectValue placeholder={loadingCurrentCommits ? "Loading commits..." : "Select current commit"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <div 
+                          className="max-h-[300px] overflow-y-auto" 
+                          onScroll={handleCurrentCommitsScroll}
+                        >
+                          {displayedCurrentCommits.map((commit) => (
+                            <SelectItem key={commit.hash} value={commit.hash}>
+                              <div className="flex flex-col">
+                                <span className="font-medium truncate">{commit.message}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatCommitHash(commit.hash)} • {new Date(commit.timestamp).toLocaleString()}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                          {displayedCurrentCommits.length < currentCommits.length && (
+                            <div className="p-2 text-center text-sm text-muted-foreground">
+                              Scroll down to load more commits...
+                            </div>
+                          )}
+                        </div>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -829,12 +1098,12 @@ export default function ImageBuilderPage() {
               <>
                 {(!baseCommit || !currentCommit) && (
                   <p className="text-sm text-muted-foreground">
-                    Enter both commit hashes to compare changes
+                    Select both commits to compare changes
                   </p>
                 )}
                 {baseCommit === currentCommit && baseCommit !== '' && (
                   <p className="text-sm text-destructive">
-                    Please provide different commit hashes to compare
+                    Please select different commits to compare
                   </p>
                 )}
               </>
@@ -842,6 +1111,11 @@ export default function ImageBuilderPage() {
             {activeComparison === 'branch' && (
               <p className="text-sm text-muted-foreground">
                 Clear branch comparison to use commit comparison
+              </p>
+            )}
+            {(!baseBranchForCommits || !currentBranchForCommits) && (
+              <p className="text-sm text-muted-foreground">
+                Select both branches to view and select commits
               </p>
             )}
           </div>
@@ -894,7 +1168,7 @@ export default function ImageBuilderPage() {
                     onClick={handleSelectAllServices}
                     className="h-8"
                   >
-                    {selectedServices.length === changedServices.length ? (
+                    {selectedServices.length === changedServices.filter(s => s.hasDockerfile).length ? (
                       <>
                         <CheckSquare className="h-4 w-4 mr-2" />
                         Deselect All
@@ -907,7 +1181,7 @@ export default function ImageBuilderPage() {
                     )}
                   </Button>
                   <span className="text-sm text-muted-foreground">
-                    {selectedServices.length} of {changedServices.length} selected
+                    {selectedServices.length} of {changedServices.filter(s => s.hasDockerfile).length} selected
                   </span>
                 </div>
                 <Button
@@ -932,21 +1206,31 @@ export default function ImageBuilderPage() {
               <div className="grid gap-2">
                 {changedServices.map((service) => (
                   <div
-                    key={service}
+                    key={service.path}
                     className="flex items-center justify-between gap-2 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
                   >
                     <div className="flex items-center gap-2">
                       <Checkbox 
-                        id={`service-${service}`}
-                        checked={selectedServices.includes(service)}
-                        onCheckedChange={() => handleServiceSelection(service)}
+                        id={`service-${service.path}`}
+                        checked={selectedServices.includes(service.path)}
+                        onCheckedChange={() => handleServiceSelection(service.path)}
+                        disabled={!service.hasDockerfile}
                       />
                       <label 
-                        htmlFor={`service-${service}`}
-                        className="flex items-center gap-2 cursor-pointer"
+                        htmlFor={`service-${service.path}`}
+                        className={cn(
+                          "flex items-center gap-2",
+                          !service.hasDockerfile && "cursor-not-allowed opacity-50"
+                        )}
                       >
                         <GitBranch className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">{service}</span>
+                        <span className="font-medium">{service.path}</span>
+                        {!service.hasDockerfile && (
+                          <span className="text-sm text-destructive flex items-center gap-1">
+                            <AlertCircle className="h-4 w-4" />
+                            No Dockerfile found
+                          </span>
+                        )}
                       </label>
                     </div>
                   </div>
