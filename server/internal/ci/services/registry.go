@@ -254,11 +254,89 @@ func (s *RegistryService) ListImages(ctx context.Context, registryID uint) ([]Do
 			}
 			resp.Body.Close()
 
-			// Only add images that have tags
+			// Only process repositories that have tags
 			if len(tagsResponse.Tags) > 0 {
+				// Get manifest for the latest tag to get creation and update times
+				latestTag := tagsResponse.Tags[len(tagsResponse.Tags)-1]
+				manifestURL := fmt.Sprintf("%s/%s/manifests/%s", registryURL, repo, latestTag)
+				req, err := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
+				if err != nil {
+					continue // Skip this repository if we can't create request
+				}
+
+				// Add authentication header and accept header for manifest v2
+				req.Header.Set("Authorization", "Bearer "+authResponse.IdentityToken)
+				req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+
+				// Send request
+				resp, err := registryClient.Do(req)
+				if err != nil {
+					continue // Skip this repository if the request fails
+				}
+
+				// Parse manifest response
+				var manifest struct {
+					SchemaVersion int    `json:"schemaVersion"`
+					MediaType     string `json:"mediaType"`
+					Config        struct {
+						MediaType string `json:"mediaType"`
+						Size      int    `json:"size"`
+						Digest    string `json:"digest"`
+					} `json:"config"`
+					Layers []struct {
+						MediaType string `json:"mediaType"`
+						Size      int64  `json:"size"`
+						Digest    string `json:"digest"`
+					} `json:"layers"`
+					Created string `json:"created"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+					resp.Body.Close()
+					continue // Skip this repository if we can't decode the manifest
+				}
+				resp.Body.Close()
+
+				// Calculate total size by summing up layer sizes
+				var totalSize int64
+				for _, layer := range manifest.Layers {
+					totalSize += layer.Size
+				}
+				// Add config size to total
+				totalSize += int64(manifest.Config.Size)
+
+				// Get config blob to get creation time
+				configURL := fmt.Sprintf("%s/%s/blobs/%s", registryURL, repo, manifest.Config.Digest)
+				req, err = http.NewRequestWithContext(ctx, "GET", configURL, nil)
+				if err != nil {
+					continue // Skip this repository if we can't create request
+				}
+
+				// Add authentication header
+				req.Header.Set("Authorization", "Bearer "+authResponse.IdentityToken)
+
+				// Send request
+				resp, err = registryClient.Do(req)
+				if err != nil {
+					continue // Skip this repository if the request fails
+				}
+
+				// Parse config response
+				var config struct {
+					Created string `json:"created"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+					resp.Body.Close()
+					continue // Skip this repository if we can't decode the config
+				}
+				resp.Body.Close()
+
+				// Add the image with creation and update times
 				images = append(images, DockerImage{
-					Name: repo,
-					Tags: tagsResponse.Tags,
+					Name:        repo,
+					Tags:        tagsResponse.Tags,
+					Size:        totalSize,
+					CreatedAt:   config.Created,
+					LastUpdated: time.Now().UTC().Format(time.RFC3339),
 				})
 			}
 		}

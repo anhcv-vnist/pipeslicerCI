@@ -837,3 +837,72 @@ func (m *RepositoryManager) GetMicroservices(ctx context.Context, id int64, bran
 
 	return microservices, nil
 }
+
+// CheckoutCommit checks out a specific commit in the repository
+func (m *RepositoryManager) CheckoutCommit(ctx context.Context, id int64, commit string) error {
+	// Get the repository
+	metadata, err := m.GetRepositoryByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Open the repository
+	repo, err := git.PlainOpen(metadata.LocalPath)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	// Get the worktree
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	// Clean the worktree
+	err = worktree.Clean(&git.CleanOptions{
+		Dir: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to clean worktree: %w", err)
+	}
+
+	// Reset any local changes
+	err = worktree.Reset(&git.ResetOptions{
+		Mode: git.HardReset,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reset worktree: %w", err)
+	}
+
+	// Fetch the commit
+	err = repo.Fetch(&git.FetchOptions{
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("+%s:refs/remotes/origin/%s", commit, commit)),
+		},
+		Force: true,
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return fmt.Errorf("failed to fetch commit: %w", err)
+	}
+
+	// Checkout the commit
+	err = worktree.Checkout(&git.CheckoutOptions{
+		Hash:  plumbing.NewHash(commit),
+		Force: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to checkout commit: %w", err)
+	}
+
+	// Update metadata
+	metadata.LastUpdated = time.Now()
+	metadata.UpdatedAt = time.Now()
+
+	// Save metadata to database
+	result := m.db.WithContext(ctx).Save(metadata)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update repository metadata: %w", result.Error)
+	}
+
+	return nil
+}

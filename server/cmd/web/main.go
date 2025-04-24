@@ -31,6 +31,7 @@ func main() {
 	handlers.SetupConfig(app)
 	handlers.SetupRegistryConnector(app)
 	handlers.SetupRepository(app)
+	handlers.SetupMetrics(app)
 
 	// Setup Swagger documentation
 	docs.SetupSwagger(app)

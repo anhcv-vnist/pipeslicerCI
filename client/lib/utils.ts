@@ -14,6 +14,33 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatDate(date: string | Date): string {
-  const d = new Date(date)
-  return d.toLocaleString()
+  if (!date) return 'N/A'
+  
+  try {
+    // Parse the date string into a Date object
+    const d = new Date(date)
+    
+    // Check if the date is valid
+    if (isNaN(d.getTime())) {
+      console.warn('Invalid date format:', date)
+      return 'Invalid date'
+    }
+    
+    // Format options for a more readable date
+    const options: Intl.DateTimeFormatOptions = {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'short'
+    }
+    
+    // Use the browser's locale for formatting
+    return d.toLocaleString(undefined, options)
+  } catch (error) {
+    console.error('Error formatting date:', error, date)
+    return 'Invalid date'
+  }
 }

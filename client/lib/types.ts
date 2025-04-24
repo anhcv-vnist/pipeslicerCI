@@ -106,16 +106,16 @@ export interface DockerImage {
   name: string;
   tags: string[];
   size: number;
-  createdAt: string;
-  lastUpdated: string;
+  created_at: string;
+  last_updated: string;
 }
 
 export interface DockerImageDetail {
   name: string;
   tags: string[];
   size: number;
-  createdAt: string;
-  lastUpdated: string;
+  created_at: string;
+  last_updated: string;
   layers: ImageLayer[];
   history: ImageHistory[];
   config: ImageConfig;
@@ -125,7 +125,7 @@ export interface DockerImageDetail {
 export interface ImageLayer {
   digest: string;
   size: number;
-  createdAt: string;
+  created_at: string;
 }
 
 export interface ImageHistory {

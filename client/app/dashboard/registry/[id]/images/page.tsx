@@ -151,6 +151,13 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
     try {
       const data = await listRegistryImages(registryId)
       console.log("Fetched images:", data);
+      // Add debugging for date values
+      if (data && data.length > 0) {
+        console.log("First image created_at:", data[0].created_at);
+        console.log("First image last_updated:", data[0].last_updated);
+        console.log("Formatted created_at:", formatDate(data[0].created_at));
+        console.log("Formatted last_updated:", formatDate(data[0].last_updated));
+      }
       setImages(data)
     } catch (error) {
       console.error("Failed to fetch registry images:", error)
@@ -396,8 +403,8 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                         </div>
                       </TableCell>
                       <TableCell>{formatBytes(image.size)}</TableCell>
-                      <TableCell>{formatDate(image.createdAt)}</TableCell>
-                      <TableCell>{formatDate(image.lastUpdated)}</TableCell>
+                      <TableCell>{formatDate(image.created_at)}</TableCell>
+                      <TableCell>{formatDate(image.last_updated)}</TableCell>
                       <TableCell className="text-right">
                         <TooltipProvider>
                           <Tooltip>
@@ -504,11 +511,11 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Created:</span>
-                        <span>{formatDate(imageDetail.createdAt)}</span>
+                        <span>{formatDate(imageDetail.created_at)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Last Updated:</span>
-                        <span>{formatDate(imageDetail.lastUpdated)}</span>
+                        <span>{formatDate(imageDetail.last_updated)}</span>
                       </div>
                     </div>
                   </div>
@@ -552,7 +559,7 @@ export default function RegistryImagesPage({ params }: { params: { id: string } 
                             {layer.digest.substring(0, 20)}...
                           </TableCell>
                           <TableCell>{formatBytes(layer.size)}</TableCell>
-                          <TableCell>{formatDate(layer.createdAt)}</TableCell>
+                          <TableCell>{formatDate(layer.created_at)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
